@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.32 (제로웨이스트차트)") 
+    st.caption("Ver 18.33 (대통합차트)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -378,7 +378,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
 elif menu == "♻️ 제로웨이스트 (분석)":
     # ==========================================
-    # [시다] 제로웨이스트 대시보드 (원형차트 Ver)
+    # [시다] 제로웨이스트 대시보드 (대통합 Ver)
     # ==========================================
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
     st.info("💡 '일반' vs '벌크(무포장)' 판매 비중을 원형 차트로 비교합니다.")
@@ -397,54 +397,63 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_zw.columns.tolist())
             
             if s_item and s_amt:
-                # 1. 부모 이름 찾기 (가지(벌크) -> 가지)
+                
+                # 1. [핵심] 거래처명 기반 태깅 (벌크 강제 분류)
+                if s_farmer:
+                    def tag_bulk_zw(row):
+                        f_name = str(row[s_farmer])
+                        i_name = str(row[s_item])
+                        if '벌크' in f_name and '벌크' not in i_name:
+                            return i_name + "(벌크)"
+                        return i_name
+                    df_zw[s_item] = df_zw.apply(tag_bulk_zw, axis=1)
+
+                # 2. 부모 이름 찾기 (대통합: 괄호 내용 전부 삭제)
                 def get_parent_zw(x):
                     s = str(x)
+                    # 벌크 삭제
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
-                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
+                    # 모든 괄호와 내용 삭제 (특, 상, 300g 등등) -> 가족 통합
+                    s = re.sub(r'\(.*?\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
                 
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                # 2. 타입 태깅 (일반 vs 벌크)
+                # 3. 타입 태깅 (일반 vs 벌크)
                 def get_type_tag(x):
                     if '벌크' in str(x) or 'bulk' in str(x).lower(): return '벌크(무포장)'
                     return '일반(포장)'
                 
                 df_zw['__type'] = df_zw[s_item].apply(get_type_tag)
                 
-                # 3. 집계: [부모이름, 타입] 별 매출 합계
+                # 4. 집계
                 grp = df_zw.groupby(['__parent', '__type'])[s_amt].sum().reset_index()
                 
-                # 4. 벌크가 존재하는 품목만 필터링 (비교할 가치가 있는 것들)
+                # 5. 벌크가 존재하는 품목만 필터링
                 parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
                 target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
                 
-                # 5. 시각화 (도넛 차트 Grid)
+                # 6. 시각화
                 st.divider()
                 st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
                 
-                # Grid Layout (한 줄에 2개씩)
                 unique_parents = sorted(target_df['__parent'].unique())
-                cols = st.columns(2) # 2열 배치
+                cols = st.columns(2)
                 
                 for i, parent in enumerate(unique_parents):
-                    # 현재 그릴 데이터
                     subset = target_df[target_df['__parent'] == parent]
                     
-                    # 도넛 차트 생성 (Plotly)
                     fig = px.pie(subset, values=s_amt, names='__type', 
                                  title=f"<b>{parent}</b>",
-                                 hole=0.4, # 도넛 모양
+                                 hole=0.4, 
                                  color='__type',
-                                 color_discrete_map={'벌크(무포장)': '#28a745', '일반(포장)': '#dc3545'}) # 초록 vs 빨강
+                                 color_discrete_map={'벌크(무포장)': '#28a745', '일반(포장)': '#dc3545'}) 
                     
-                    fig.update_layout(showlegend=True, height=300, margin=dict(t=30, b=0, l=0, r=0))
+                    fig.update_layout(showlegend=True, height=300, margin=dict(t=40, b=0, l=0, r=0))
                     
-                    # 2열 교차 배치
                     with cols[i % 2]:
                         st.plotly_chart(fig, use_container_width=True)
 
