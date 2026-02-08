@@ -128,7 +128,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.19 (가족상봉정렬)") 
+    st.caption("Ver 18.20 (벌크분리표시)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -187,7 +187,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
                 
-                # 거래처명 통합 (지족점야채)
+                # 거래처명 통합
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -238,10 +238,23 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
                 # =======================================================
-                # [시다의 정렬 키 생성]
-                # __clean_item: 족보(부모) 이름 -> 이걸로 정렬하면 가족끼리 뭉침
+                # [시다의 이중 이름표 전략]
+                # 1. __display_name: 화면 표시용 (벌크 유지, 무게만 삭제)
+                # 2. __clean_parent: 문자용 & 정렬용 (벌크 삭제 -> 부모 이름)
                 # =======================================================
-                def make_clean_name(x):
+                
+                # (1) 화면용 이름 만들기: '벌크'는 남기고, '(300g)' 같은 무게 숫자만 지움
+                def make_display_name(x):
+                    s = str(x)
+                    # 괄호 안의 무게 숫자만 삭제 (예: (300g), (1.2kg))
+                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
+                    s = s.replace('()', '').replace('  ', ' ').strip()
+                    # 공백은 보기 좋게 유지하거나 제거 (여기선 제거 통일)
+                    s = s.replace(' ', '')
+                    return s
+
+                # (2) 문자용/정렬용 부모 이름 만들기: '벌크'도 삭제
+                def make_parent_name(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
@@ -250,13 +263,15 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     s = s.replace(' ', '')
                     return s
 
-                df_target['__clean_item'] = df_target[s_item].apply(make_clean_name)
+                df_target['__display_name'] = df_target[s_item].apply(make_display_name)
+                df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
             # =======================================================
             # [집계 1: 화면 표시용] 
-            # 그룹핑 키에 '__clean_item'을 포함시켜야 정렬에 쓸 수 있음
+            # 그룹핑 키: [농가, 화면표시이름(__display_name)] 
+            # -> 이렇게 해야 '가지'와 '가지(벌크)'가 따로 집계됨!
             # =======================================================
-            groupby_disp = [s_farmer, s_item, '구분', '__clean_item'] 
+            groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum',
@@ -270,19 +285,20 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 agg_disp.rename(columns={'clean_phone': '전화번호'}, inplace=True)
             else: agg_disp['전화번호'] = ''
             
-            agg_disp.rename(columns={s_farmer: '업체명', s_item: '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
+            agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['판매량'] > 0]
             
-            # [핵심 변경] 정렬 로직: 부모이름(__clean_item) -> 본인이름(상품명) 순서
-            agg_disp = agg_disp.sort_values(by=['업체명', '__clean_item', '상품명'])
+            # [가족 상봉 정렬] 부모이름(__clean_parent) -> 본인이름(상품명) 순서
+            # 이렇게 하면 '가지'와 '가지(벌크)'가 붙어서 나옴
+            agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
 
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
             # =======================================================
-            # [집계 2: 문자 발송용] - 부모이름(__clean_item)으로 재집계
+            # [집계 2: 문자 발송용] - 부모이름(__clean_parent)으로 재집계
             # =======================================================
-            agg_sms = agg_disp.groupby(['업체명', '__clean_item']).agg({
+            agg_sms = agg_disp.groupby(['업체명', '__clean_parent']).agg({
                 '발주_수량': 'sum',
                 '발주_중량': 'sum',
                 '__total_kg': 'sum'
@@ -292,7 +308,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             # [문자 생성 함수]
             def make_order_line_sms(row):
-                item_name = row['__clean_item']
+                item_name = row['__clean_parent']
                 if row['__total_kg'] > 0:
                     qty_str = f"{int(row['발주_중량'])}kg"
                 else:
