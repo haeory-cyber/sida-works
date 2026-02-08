@@ -130,7 +130,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.13 (중량합산시스템)") 
+    st.caption("Ver 18.15 (벌크스마트통합)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -210,36 +210,23 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # [시다의 해결책] 중량 추출 및 합산 로직
+            # [시다의 핵심 로직] 무게 추출 및 스마트 상품명 정리
             
-            # 1. kg 단위 추출 함수 (5kg -> 5, 500g -> 0.5)
+            # 1. kg 단위 추출 (무게 계산용)
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
-                # 숫자 뒤에 kg가 오는 경우
                 kg_match = re.search(r'([\d\.]+)(kg)', text)
                 if kg_match:
                     try: return float(kg_match.group(1))
                     except: pass
-                
-                # 숫자 뒤에 g가 오는 경우 (1000으로 나눔)
                 g_match = re.search(r'([\d\.]+)(g)', text)
                 if g_match:
                     try: return float(g_match.group(1)) / 1000.0
                     except: pass
-                
                 return 0.0
 
-            # 2. 데이터프레임에 단위중량(kg) 컬럼 생성
             if s_item:
-                # 상품명 정제 (벌크 괄호 제거 등)
-                def normalize_name(x):
-                    s = str(x)
-                    if '벌크' in s:
-                        s = re.sub(r'\(.*?\)', '', s).replace(' ', '')
-                    return s
-                df_target[s_item] = df_target[s_item].apply(normalize_name)
-
-                # 단위 중량 계산 (규격 컬럼 우선, 없으면 상품명에서 추출)
+                # 2. 총 중량 계산 (이름 바꾸기 전에 먼저 계산!)
                 def calc_unit_weight(row):
                     w = 0.0
                     if s_spec and pd.notna(row.get(s_spec)):
@@ -249,17 +236,29 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     return w
 
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
-                # 총 중량 = 단위중량 * 판매량
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-            # 3. 집계 (이제 규격(s_spec)은 그룹핑 키에서 뺍니다!)
-            #    그래야 5kg, 10kg이 합쳐집니다.
+                # 3. [이름 정리] '벌크'인 경우에만 괄호 속 숫자(무게) 제거
+                def smart_clean_name(x):
+                    s = str(x)
+                    # '벌크'가 들어간 상품만 처리
+                    if '벌크' in s:
+                        # (378g), (1.2kg), (300) 같은 패턴 제거
+                        # 단, (특), (상) 같은 등급은 건드리지 않음 (숫자가 포함된 괄호만 타겟)
+                        s = re.sub(r'\(\d+(?:\.\d+)?(?:g|kg|G|KG)?\)', '', s)
+                        s = s.replace(' ', '') # 공백 제거
+                    return s
+
+                df_target[s_item] = df_target[s_item].apply(smart_clean_name)
+
+            # 4. 집계 
+            # 이제 '가지(벌크)'는 하나로 합쳐지고, '감귤(중)'/'감귤(소)'는 따로 남습니다.
             groupby_cols = [s_farmer, s_item, '구분']
             
             agg_item = df_target.groupby(groupby_cols).agg({
-                s_qty: 'sum',          # 수량 합계 (필요시 참고용)
+                s_qty: 'sum',          # 수량 합계
                 s_amt: 'sum',          # 금액 합계
-                '__total_kg': 'sum'    # 총 중량 합계 (핵심!)
+                '__total_kg': 'sum'    # 총 중량 합계
             }).reset_index()
             
             if not df_phone_map.empty and s_farmer:
@@ -268,34 +267,28 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 agg_item.rename(columns={'clean_phone': '전화번호'}, inplace=True)
             else: agg_item['전화번호'] = ''
             
-            # 컬럼명 통일
             rename_map = {s_farmer: '업체명', s_item: '상품명', s_qty: '판매량', s_amt: '총판매액'}
             agg_item.rename(columns=rename_map, inplace=True)
             
             agg_item = agg_item[agg_item['판매량'] > 0]
-            
-            # 정렬: 업체명 -> 상품명
             agg_item = agg_item.sort_values(by=['업체명', '상품명'])
             
             agg_item['평균판매가'] = agg_item['총판매액'] / agg_item['판매량']
             agg_item['추정매입가'] = agg_item['평균판매가'] * purchase_rate
             
-            # 발주량 계산 (중량이 있으면 중량 기준, 없으면 수량 기준)
-            # 안전계수 반영
             agg_item['발주_수량'] = np.ceil(agg_item['판매량'] * safety)
-            agg_item['발주_중량'] = np.ceil(agg_item['__total_kg'] * safety) # kg단위는 소수점 올림? 일단 정수로 올림 처리
+            agg_item['발주_중량'] = np.ceil(agg_item['__total_kg'] * safety)
             
             tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 (직접 발주)"])
             
             # [공통 문자 생성 함수]
             def make_order_line(row):
                 item_name = row['상품명']
-                # 중량이 0보다 크면 kg으로 표시, 아니면 개수로 표시
+                # 벌크 상품이라 중량이 있으면 kg으로, 아니면 수량으로
                 if row['__total_kg'] > 0:
-                    # 안전계수 적용된 발주 중량
                     qty_str = f"{int(row['발주_중량'])}kg"
                 else:
-                    qty_str = f"{int(row['발주_수량'])}개" # 혹은 팩/단
+                    qty_str = f"{int(row['발주_수량'])}개" 
                 return f"- {item_name}: {qty_str}"
 
             # --- [탭 1] 일반 업체 ---
@@ -365,9 +358,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                         icon = "✅" if is_sent else "🚚"
                         
                         with st.expander(f"{icon} {main_vendor} (통합매출: {total_sales:,.0f}원)", expanded=not is_sent):
-                            
-                            # 화면용 컬럼: 중량 정보 보여주기
-                            # 중량이 있으면 '총중량kg' 컬럼을 보여주고, 아니면 '판매량'을 보여주는 게 좋음
                             
                             def show_table(df_show):
                                 d = df_show.copy()
