@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 19.70 (매출기준표시)") 
+    st.caption("Ver 19.80 (매출기준살리기)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -186,7 +186,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
-            # 발주용 전처리: 거래처명에 '벌크' 있으면 상품명에 (벌크) 추가
             if s_farmer and s_item:
                 def tag_bulk_item(row):
                     f_name = str(row[s_farmer])
@@ -198,7 +197,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
-                # 거래처명 통합
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -222,6 +220,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
+            # [긴급 처방] 수량이 0이거나 비어있는데, 매출액이 있으면 수량을 1로 강제 설정
+            # 이렇게 해야 봄동, 양배추 등이 0개로 인식되어 사라지는 것을 막음
+            df_target.loc[(df_target[s_qty] <= 0) & (df_target[s_amt] > 0), s_qty] = 1
+
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
                 kg_match = re.search(r'([\d\.]+)(kg)', text)
@@ -244,14 +246,12 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-                # (1) 화면용
                 def make_display_name(x):
                     s = str(x)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
-                # (2) 문자용 (통합)
                 def make_parent_name(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -263,7 +263,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
-            # [집계 1] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -277,14 +276,13 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             
-            # [수정된 핵심] 판매량이 0이라도(벌크라 수량 없을때), 총판매액(돈)이 있으면 살려라!
+            # [수정] 판매량이 아닌 '총판매액(매출)'이 0보다 크면 무조건 보여줌!
             agg_disp = agg_disp[agg_disp['총판매액'] > 0]
             
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
-            # [집계 2] 문자용
             agg_sms = agg_disp.groupby(['업체명', '__clean_parent']).agg({
                 '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
             }).reset_index()
@@ -293,16 +291,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             def make_order_line_sms(row):
                 item_name = row['__clean_parent']
-                # 수량이 0이어도 매출이 있어서 잡힌 경우 -> 무게 표시 우선, 없으면 1개라도 발주하는 셈 치고 수량 표시
-                qty_str = ""
                 if row['__total_kg'] > 0:
                     qty_str = f"{int(row['발주_중량'])}kg"
-                elif row['발주_수량'] > 0:
-                    qty_str = f"{int(row['발주_수량'])}개"
                 else:
-                    # 무게도 수량도 0인데 매출은 있는 경우 (혹시 모를 예외처리)
-                    qty_str = "확인필요"
-                    
+                    qty_str = f"{int(row['발주_수량'])}개"
                 return f"- {item_name}: {qty_str}"
 
             with tab1:
@@ -379,11 +371,9 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             with c2: st.text_area("내용", value=default_msg, height=250, key=f"m_v10_{main_vendor}")
 
 elif menu == "♻️ 제로웨이스트 (분석)":
-    # -----------------------------------------------------
-    # [제로웨이스트 탭: 숨은 벌크 찾기]
-    # -----------------------------------------------------
+    # (제로웨이스트 탭: 현장 중심 로직 - 그대로 유지)
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
-    st.info("💡 **[숨은 벌크 찾기]** 라벨에 '벌크'가 없어도 실제로는 무포장인 상품(봄동 등)을 찾아주세요.")
+    st.info("💡 **[현장 중심 로직]** 라벨에 '벌크'가 찍힌 상품(무포장)과 그렇지 않은 상품(소포장)을 자동으로 구분합니다.")
     
     with st.expander("📂 판매 데이터 업로드 (발주탭과 동일 파일)", expanded=True):
         up_zw_list = st.file_uploader("판매 실적 파일", type=['xlsx', 'csv'], accept_multiple_files=True, key='zw_up')
@@ -413,8 +403,8 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                # 2. 초기 자동 태깅 (텍스트 기반)
-                def get_initial_type(row):
+                # 2. [심플 로직] 오직 텍스트로만 판단
+                def get_type_tag(row):
                     i_name = str(row[s_item])
                     f_name = str(row[s_farmer]) if s_farmer and pd.notna(row[s_farmer]) else ""
                     
@@ -422,46 +412,21 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                     if '벌크' in f_name: return '벌크(무포장)'
                     return '일반(포장)'
                 
-                df_zw['__type'] = df_zw.apply(get_initial_type, axis=1)
+                df_zw['__type'] = df_zw.apply(get_type_tag, axis=1)
                 
-                # 3. [핵심] 숨은 벌크 강제 지정
-                c_a, c_b = st.columns([3, 1])
-                with c_a:
-                    st.markdown("##### 🕵️‍♂️ [강제 벌크 지정] 라벨은 '일반'이지만 실제로는 '벌크'인 품목을 선택하세요.")
-                    # 현재 '일반(포장)'으로 분류된 모든 아이템을 후보로 보여줌
-                    potential_hidden_bulk = df_zw[df_zw['__type'] == '일반(포장)'][s_item].unique()
-                    forced_bulk_list = st.multiselect(
-                        "여기서 선택하면 즉시 '벌크'로 변신합니다. (예: 봄동, 양배추)",
-                        options=sorted(potential_hidden_bulk)
-                    )
-                with c_b:
-                    # [옵션] 모든 데이터 보기 토글
-                    show_all = st.checkbox("🔍 100% 포장상품도 보기", help="체크하면 제로웨이스트가 하나도 없는 품목(빨간색 100%)도 모두 표시합니다.")
-
-                # 선택된 품목 강제 변경
-                if forced_bulk_list:
-                    df_zw.loc[df_zw[s_item].isin(forced_bulk_list), '__type'] = '벌크(무포장)'
-                    st.success(f"✅ {len(forced_bulk_list)}개 품목을 '벌크'로 변경했습니다.")
-
-                # 4. 집계
+                # 3. 집계
                 grp = df_zw.groupby(['__parent', '__type'])[s_amt].sum().reset_index()
                 
-                # 5. 필터링 (쇼 올 옵션 적용)
-                if show_all:
-                    target_df = grp.copy() # 모든 품목 표시
-                else:
-                    # 벌크가 하나라도 있는 품목만 표시 (기본)
-                    parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
-                    target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
+                # 4. 벌크가 존재하는 품목만 필터링
+                parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
+                target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
                 
                 st.divider()
-                
-                unique_parents = sorted(target_df['__parent'].unique())
-                
-                if len(unique_parents) == 0:
-                    st.info("표시할 데이터가 없습니다. (옵션을 확인하거나 품목을 지정해보세요)")
+                if len(parents_with_bulk) == 0:
+                    st.info("현재 '벌크(무포장)'로 분류된 데이터가 없습니다. 라벨 변경 후 데이터를 올려주세요.")
                 else:
-                    st.markdown(f"**총 {len(unique_parents)}개 품목 분석**")
+                    st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
+                    unique_parents = sorted(target_df['__parent'].unique())
                     cols = st.columns(2)
                     for i, parent in enumerate(unique_parents):
                         subset = target_df[target_df['__parent'] == parent]
@@ -478,7 +443,7 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 st.error("데이터 형식을 확인할 수 없습니다.")
 
 elif menu == "📢 품앗이 이음 (마케팅)":
-    # (기존 마케팅 코드 생략 없이 유지)
+    # (기존 마케팅 코드 유지)
     with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
         up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
 
