@@ -19,12 +19,9 @@ SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 SERVER_MEMBER_FILE = "회원관리(전체).xlsx"
 
 # ==========================================
-# 0. [공통 함수 및 세션 초기화]
+# 0. [공통 함수 및 세션]
 # ==========================================
-
-# [NEW] 문자 전송 이력 저장소 초기화
-if 'sms_history' not in st.session_state:
-    st.session_state.sms_history = []
+if 'sms_history' not in st.session_state: st.session_state.sms_history = []
 
 def send_coolsms_direct(api_key, api_secret, sender, receiver, text):
     try:
@@ -46,13 +43,11 @@ def send_coolsms_direct(api_key, api_secret, sender, receiver, text):
         else: return False, res.json()
     except Exception as e: return False, {"errorMessage": str(e)}
 
-# [NEW] 전송 후 로그를 남기는 래퍼 함수
 def send_and_log(sender_name, receiver_phone, msg_text):
     if not st.session_state.api_key:
         st.error("API Key가 없습니다.")
         return False
     
-    # 1. 전송 시도
     ok, res = send_coolsms_direct(
         st.session_state.api_key, 
         st.session_state.api_secret, 
@@ -61,23 +56,12 @@ def send_and_log(sender_name, receiver_phone, msg_text):
         msg_text
     )
     
-    # 2. 결과 기록
     now_str = datetime.datetime.now().strftime("%H:%M:%S")
     status = "✅ 성공" if ok else "❌ 실패"
-    note = ""
-    if not ok:
-        note = res.get("errorMessage", str(res))
+    note = "" if ok else res.get("errorMessage", str(res))
     
-    # 로그 리스트에 추가 (최신순)
-    log_entry = {
-        "시간": now_str,
-        "수신자": sender_name, # 업체명 또는 고객명
-        "번호": receiver_phone,
-        "결과": status,
-        "비고": note
-    }
-    st.session_state.sms_history.insert(0, log_entry) # 맨 앞에 추가
-    
+    log_entry = {"시간": now_str, "수신자": sender_name, "번호": receiver_phone, "결과": status, "비고": note}
+    st.session_state.sms_history.insert(0, log_entry)
     return ok
 
 def clean_phone_number(phone):
@@ -168,7 +152,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 21.00 (문자이력확인)") 
+    st.caption("Ver 21.10 (UI개선)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -182,7 +166,6 @@ with st.sidebar:
     st.session_state.api_secret = st.text_input("API Secret", value=st.session_state.api_secret, type="password")
     st.session_state.sender_number = st.text_input("발신번호 (숫자만)", value=st.session_state.sender_number)
 
-    # [NEW] 문자 전송 이력 사이드바 표시
     st.divider()
     with st.expander("📋 문자 전송 이력", expanded=True):
         if st.session_state.sms_history:
@@ -198,9 +181,6 @@ st.title("🤖 시다 워크 (Sida Works)")
 menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨이스트 (분석)", "📢 품앗이 이음 (마케팅)"], horizontal=True)
 
 if menu == "📦 품앗이 오더 (자동 발주)":
-    # -----------------------------------------------------
-    # [발주 탭: 거래처 통합, 수량 0 보정, WYSIWYG, 로그기록]
-    # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
@@ -274,8 +254,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             # 2. 숫자 변환 및 수량 0 보정
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
-            
-            # 매출이 있는데 수량이 0 이하면, 1개로 강제!
             df_target.loc[(df_target[s_qty] <= 0) & (df_target[s_amt] > 0), s_qty] = 1
 
             def extract_kg(text):
@@ -300,7 +278,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-                # [수정] 화면용 이름: 별표(*) 제거
                 def make_display_name(x):
                     s = str(x)
                     s = s.replace('*', '') 
@@ -308,7 +285,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
-                # [수정] 부모 이름: 별표(*) 제거
                 def make_parent_name(x):
                     s = str(x)
                     s = s.replace('*', '') 
@@ -321,7 +297,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
-            # [집계] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -334,17 +309,13 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             else: agg_disp['전화번호'] = ''
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
-            
-            # [필터] 매출 > 0이면 무조건 통과
             agg_disp = agg_disp[agg_disp['총판매액'] > 0]
-            
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
             tab1, tab2 = st.tabs(["🏢 외부업체", "🏪 지족 사입"])
             
-            # 문자열 생성 헬퍼
             def generate_sms_text(df_source):
                 grouped = df_source.groupby('__clean_parent').agg({
                     '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
@@ -377,15 +348,23 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             st.dataframe(v_data_disp[['상품명', '판매량', '총판매액']], hide_index=True, use_container_width=True)
                             c1, c2 = st.columns([1, 2])
                             with c1:
+                                st.markdown("#### 📞 수신 번호")
                                 phone = str(v_data_disp['전화번호'].iloc[0]) if not pd.isna(v_data_disp['전화번호'].iloc[0]) else ''
-                                in_phone = st.text_input("전화번호", value=phone, key=f"p_ext_{vendor}")
-                                # [NEW] send_and_log 함수 사용
-                                if not is_sent and st.button(f"🚀 전송", key=f"b_ext_{vendor}", type="primary"):
+                                in_phone = st.text_input("전화번호", value=phone, key=f"p_ext_{vendor}", label_visibility="collapsed")
+                                st.write("")
+                                # [UI 개선] 버튼을 입력창 바로 아래 배치
+                                if st.button(f"🚀 {vendor} 발송", key=f"b_ext_{vendor}", type="primary", use_container_width=True):
                                     ok = send_and_log(vendor, clean_phone_number(in_phone), st.session_state.get(f"m_ext_{vendor}", default_msg))
                                     if ok:
                                         st.session_state.sent_history.add(vendor)
+                                        st.success("✅ 발송이 성공하였습니다") # 성공 메시지 바로 표시
+                                        time.sleep(1.5)
                                         st.rerun()
-                            with c2: st.text_area("내용", value=default_msg, height=150, key=f"m_ext_{vendor}")
+                                    else:
+                                        st.error("❌ 발송 실패")
+                            with c2: 
+                                st.markdown("#### 📝 내용 미리보기")
+                                st.text_area("내용", value=default_msg, height=200, key=f"m_ext_{vendor}", label_visibility="collapsed")
 
             with tab2:
                 df_int = agg_disp[agg_disp['구분'] == "지족(사입)"].copy()
@@ -406,7 +385,9 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             d_show['총판매액'] = d_show['총판매액'].apply(lambda x: f"{x:,.0f}")
                             st.dataframe(d_show[['상품명', '발주표시', '총판매액']], hide_index=True, use_container_width=True)
                             
-                            st.markdown("##### 📝 통합 발주 문자")
+                            st.markdown("---")
+                            
+                            # [WYSIWYG] 화면 데이터를 그대로 사용해 문자 생성
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
                             auto_msg_lines.extend(generate_sms_text(df_main_disp))
                             auto_msg_lines.append("")
@@ -415,18 +396,26 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
                             c1, c2 = st.columns([1, 2])
                             with c1:
+                                st.markdown("#### 📞 수신 번호")
                                 ph = str(df_main_disp['전화번호'].iloc[0]) if not pd.isna(df_main_disp['전화번호'].iloc[0]) else ''
-                                in_phone = st.text_input("전화번호", value=ph, key=f"p_v10_{main_vendor}")
-                                # [NEW] send_and_log 함수 사용
-                                if not is_sent and st.button(f"🚀 전송", key=f"b_v10_{main_vendor}", type="primary"):
+                                in_phone = st.text_input("전화번호", value=ph, key=f"p_v10_{main_vendor}", label_visibility="collapsed")
+                                st.write("")
+                                # [UI 개선] 버튼을 입력창 바로 아래 배치
+                                if st.button(f"🚀 {main_vendor} 발송", key=f"b_v10_{main_vendor}", type="primary", use_container_width=True):
                                     ok = send_and_log(main_vendor, clean_phone_number(in_phone), final_msg)
                                     if ok:
                                         st.session_state.sent_history.add(main_vendor)
+                                        st.success("✅ 발송이 성공하였습니다") # 성공 메시지 바로 표시
+                                        time.sleep(1.5)
                                         st.rerun()
-                            with c2: st.text_area("내용", value=default_msg, height=250, key=f"m_v10_{main_vendor}")
+                                    else:
+                                        st.error("❌ 발송 실패")
+                            with c2: 
+                                st.markdown("#### 📝 내용 미리보기")
+                                st.text_area("내용", value=default_msg, height=400, key=f"m_v10_{main_vendor}", label_visibility="collapsed")
 
 elif menu == "♻️ 제로웨이스트 (분석)":
-    # (제로웨이스트 탭: 현장 중심 심플 로직 유지)
+    # (제로웨이스트 탭 유지)
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
     st.info("💡 **[현장 중심 로직]** 라벨에 '벌크'가 찍힌 상품(무포장)과 그렇지 않은 상품(소포장)을 자동으로 구분합니다.")
     
@@ -491,7 +480,7 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 st.error("데이터 형식을 확인할 수 없습니다.")
 
 elif menu == "📢 품앗이 이음 (마케팅)":
-    # (기존 마케팅 코드 유지 및 로그 기능 추가)
+    # (마케팅 탭 유지)
     with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
         up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
 
@@ -550,7 +539,6 @@ elif menu == "📢 품앗이 이음 (마케팅)":
             else:
                 bar = st.progress(0)
                 for i, r in enumerate(final_df.itertuples()):
-                    # [NEW] send_and_log 함수 사용
                     send_and_log(r.이름, r.전화번호, msg_txt)
                     bar.progress((i+1)/len(final_df))
-                st.success("발송 완료! (왼쪽 사이드바에서 이력을 확인하세요)")
+                st.success("발송 완료!")
