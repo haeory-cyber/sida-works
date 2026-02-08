@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 20.20 (화면문자일치)") 
+    st.caption("Ver 20.30 (완전통합성공)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -148,7 +148,7 @@ menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨�
 
 if menu == "📦 품앗이 오더 (자동 발주)":
     # -----------------------------------------------------
-    # [발주 탭: 거래처 통합, 수량 0 보정, WYSIWYG 적용]
+    # [발주 탭: 거래처 통합, 수량 0 보정, 별표 제거]
     # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
@@ -257,6 +257,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
                 def make_parent_name(x):
                     s = str(x)
+                    s = s.replace('*', '') # [NEW] 별표 제거! (*가지* -> 가지)
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
@@ -266,7 +267,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
-            # [집계] 화면 표시용 (s_farmer 그대로 사용)
+            # [집계] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -289,16 +290,9 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
             tab1, tab2 = st.tabs(["🏢 외부업체", "🏪 지족 사입"])
             
-            # [핵심] 테이블에 보이는 데이터(row)를 그대로 문자로 변환
-            def make_order_line_from_disp(row):
-                item_name = row['상품명'] # 부모이름 말고 그냥 상품명 씀 (구분 명확히) -> 아니면 부모이름 쓸수도 있음
-                # 하지만 발주를 위해서는 부모이름끼리 묶는게 좋음.
-                # 여기서는 화면에 보이는 그대로를 원칙으로 하므로, 화면 데이터를 다시 그룹핑해서 문자 생성.
-                pass
-
-            # 문자열 생성 헬퍼
+            # 문자열 생성 헬퍼 (별표 제거된 부모이름으로 통합)
             def generate_sms_text(df_source):
-                # 1. 부모 품목명으로 그룹핑 (화면에 보이는 데이터를 재집계)
+                # 1. 부모 품목명(__clean_parent)으로 그룹핑 (별표/괄호 다 떼고 합침)
                 grouped = df_source.groupby('__clean_parent').agg({
                     '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
                 }).reset_index()
