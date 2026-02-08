@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.50 (진단모드)") 
+    st.caption("Ver 18.60 (가족대통합)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -147,7 +147,7 @@ st.title("🤖 시다 워크 (Sida Works)")
 menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨이스트 (분석)", "📢 품앗이 이음 (마케팅)"], horizontal=True)
 
 if menu == "📦 품앗이 오더 (자동 발주)":
-    # (발주 탭 코드는 이전과 동일하게 유지 - 분량상 생략하지 않고 전체 포함)
+    # (발주 탭 코드는 이전과 동일 - 분량상 유지)
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
@@ -184,7 +184,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
-            # 발주용 전처리: 거래처명에 '벌크' 있으면 상품명에 (벌크) 추가
             if s_farmer and s_item:
                 def tag_bulk_item(row):
                     f_name = str(row[s_farmer])
@@ -375,13 +374,16 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             
             if s_item and s_amt:
                 
-                # [진단용] 분류 로직 (디버깅)
+                # [수정된 핵심] 부모 이름 찾기 (모든 괄호 내용 과감히 삭제!)
+                # 가지(3개입) -> 가지
+                # 새송이버섯(무농약) -> 새송이버섯
+                # 가지(벌크) -> 가지
                 def get_parent_zw(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
-                    # (300g), ( 1kg ) 등 무게 패턴 삭제
-                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s) 
+                    # [중요] 괄호 안의 모든 내용 삭제 (무농약, 3개입, 특 등등)
+                    s = re.sub(r'\(.*?\)', '', s) 
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
                 
@@ -392,16 +394,18 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 def get_type_tag(row):
                     i_name = str(row[s_item])
                     f_name = str(row[s_farmer]) if s_farmer and pd.notna(row[s_farmer]) else ""
+                    
                     if '벌크' in i_name or 'bulk' in i_name.lower(): return '벌크(무포장)'
                     if '벌크' in f_name: return '벌크(무포장)'
+                    
                     return '일반(포장)'
                 
                 df_zw['__type'] = df_zw.apply(get_type_tag, axis=1)
                 
-                # [NEW] 데이터 진단 모드
+                # [진단 모드]
                 with st.expander("🔍 분류 결과 미리보기 (클릭해서 확인)"):
                     st.write("아래 표를 보고 '부모이름'이 같고 '타입'이 나뉘는지 확인하세요.")
-                    debug_df = df_zw[[s_farmer, s_item, '__parent', '__type', s_amt]].head(50) if s_farmer else df_zw[[s_item, '__parent', '__type', s_amt]].head(50)
+                    debug_df = df_zw[[s_item, '__parent', '__type', s_amt]].head(50)
                     st.dataframe(debug_df)
 
                 # 집계
@@ -413,13 +417,15 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 
                 st.divider()
                 if len(parents_with_bulk) == 0:
-                    st.warning("⚠️ '벌크(무포장)'로 분류된 데이터가 하나도 없습니다. 상품명이나 거래처명에 '벌크'가 포함되어 있는지 확인해주세요.")
+                    st.warning("⚠️ '벌크(무포장)'로 분류된 데이터가 하나도 없습니다.")
                 else:
                     st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
                     unique_parents = sorted(target_df['__parent'].unique())
                     cols = st.columns(2)
                     for i, parent in enumerate(unique_parents):
                         subset = target_df[target_df['__parent'] == parent]
+                        
+                        # 차트 그리기
                         fig = px.pie(subset, values=s_amt, names='__type', 
                                      title=f"<b>{parent}</b>",
                                      hole=0.4, 
