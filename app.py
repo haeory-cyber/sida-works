@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.33 (대통합차트)") 
+    st.caption("Ver 18.41 (무게추측금지)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -185,12 +185,14 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         
         if s_item and s_qty and s_amt:
             # -----------------------------------------------------------
-            # [긴급 처방] 거래처명 통합 전, 물품명에 꼬리표 달기
+            # [발주 탭] 여기는 농가 발주가 목적이므로 
+            # 거래처명에 벌크가 있으면 상품명에 붙여서 구분해주고 시작
             # -----------------------------------------------------------
             if s_farmer and s_item:
                 def tag_bulk_item(row):
                     f_name = str(row[s_farmer])
                     i_name = str(row[s_item])
+                    # 거래처명에 '벌크'가 있는데, 상품명에는 없다면? -> 상품명 뒤에 (벌크) 추가
                     if '벌크' in f_name and '벌크' not in i_name:
                         return i_name + "(벌크)"
                     return i_name
@@ -223,6 +225,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
+            # 1. kg 단위 추출
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
                 kg_match = re.search(r'([\d\.]+)(kg)', text)
@@ -247,14 +250,14 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-                # (1) 화면용 이름 (벌크 유지)
+                # (1) 화면용
                 def make_display_name(x):
                     s = str(x)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
-                # (2) 문자용/부모 이름 (벌크 삭제)
+                # (2) 문자용 (통합)
                 def make_parent_name(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -281,7 +284,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['판매량'] > 0]
             
-            # 정렬: 부모 -> 본인
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
@@ -378,10 +380,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
 elif menu == "♻️ 제로웨이스트 (분석)":
     # ==========================================
-    # [시다] 제로웨이스트 대시보드 (대통합 Ver)
+    # [시다] 제로웨이스트 대시보드 (엄격한 분류 Ver)
     # ==========================================
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
-    st.info("💡 '일반' vs '벌크(무포장)' 판매 비중을 원형 차트로 비교합니다.")
+    st.info("💡 '일반' vs '벌크' (명시된 것만 인정) 판매 비중을 원형 차트로 비교합니다.")
     
     with st.expander("📂 판매 데이터 업로드 (발주탭과 동일 파일)", expanded=True):
         up_zw_list = st.file_uploader("판매 실적 파일", type=['xlsx', 'csv'], accept_multiple_files=True, key='zw_up')
@@ -398,45 +400,42 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             
             if s_item and s_amt:
                 
-                # 1. [핵심] 거래처명 기반 태깅 (벌크 강제 분류)
-                if s_farmer:
-                    def tag_bulk_zw(row):
-                        f_name = str(row[s_farmer])
-                        i_name = str(row[s_item])
-                        if '벌크' in f_name and '벌크' not in i_name:
-                            return i_name + "(벌크)"
-                        return i_name
-                    df_zw[s_item] = df_zw.apply(tag_bulk_zw, axis=1)
-
-                # 2. 부모 이름 찾기 (대통합: 괄호 내용 전부 삭제)
+                # 1. 부모 이름 찾기 (대통합: 괄호 내용 전부 삭제)
                 def get_parent_zw(x):
                     s = str(x)
-                    # 벌크 삭제
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
-                    # 모든 괄호와 내용 삭제 (특, 상, 300g 등등) -> 가족 통합
-                    s = re.sub(r'\(.*?\)', '', s)
+                    s = re.sub(r'\(.*?\)', '', s) # 모든 괄호 내용 삭제
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
                 
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                # 3. 타입 태깅 (일반 vs 벌크)
-                def get_type_tag(x):
-                    if '벌크' in str(x) or 'bulk' in str(x).lower(): return '벌크(무포장)'
+                # 2. [엄격한 타입 태깅]
+                # 무게(g/kg)가 있어도 벌크라고 추측하지 않음.
+                # 오직 '벌크' 텍스트가 상품명이나 거래처명에 있을 때만 인정.
+                def get_type_tag(row):
+                    i_name = str(row[s_item])
+                    f_name = str(row[s_farmer]) if s_farmer else ""
+                    
+                    # 상품명에 '벌크'가 있는가?
+                    if '벌크' in i_name or 'bulk' in i_name.lower(): return '벌크(무포장)'
+                    # 거래처명에 '벌크'가 있는가?
+                    if '벌크' in f_name: return '벌크(무포장)'
+                    
                     return '일반(포장)'
                 
-                df_zw['__type'] = df_zw[s_item].apply(get_type_tag)
+                df_zw['__type'] = df_zw.apply(get_type_tag, axis=1)
                 
-                # 4. 집계
+                # 3. 집계
                 grp = df_zw.groupby(['__parent', '__type'])[s_amt].sum().reset_index()
                 
-                # 5. 벌크가 존재하는 품목만 필터링
+                # 4. 벌크가 존재하는 품목만 필터링
                 parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
                 target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
                 
-                # 6. 시각화
+                # 5. 시각화
                 st.divider()
                 st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
                 
