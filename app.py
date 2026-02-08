@@ -102,7 +102,7 @@ def detect_columns(df_columns):
     return s_item, s_qty, s_amt, s_farmer, s_spec
 
 # ==========================================
-# 2. [일반 발주 업체] (화이트리스트) - 오류 수정됨
+# 2. [일반 발주 업체] (화이트리스트)
 # ==========================================
 VALID_SUPPLIERS = [
     "(주)가보트레이딩", "(주)열두달", "(주)우리밀", "(주)윈윈농수산", "(주)유기샘",
@@ -128,7 +128,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.23 (Syntax수정)") 
+    st.caption("Ver 18.24 (벌크꼬리표)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -183,6 +183,24 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
+            # ==========================================
+            # [시다의 긴급 처방] 거래처명에 '벌크'가 있으면 상품명에 '벌크' 꼬리표 붙이기
+            # 거래처명을 통합하기 *전*에 이 작업을 먼저 해야 합니다.
+            # ==========================================
+            if s_farmer and s_item:
+                def tag_bulk_item(row):
+                    f_name = str(row[s_farmer])
+                    i_name = str(row[s_item])
+                    # 거래처명에 '벌크'가 있는데, 상품명에는 없다면? -> 상품명 뒤에 (벌크) 추가
+                    if '벌크' in f_name and '벌크' not in i_name:
+                        return i_name + "(벌크)"
+                    return i_name
+                
+                df_s[s_item] = df_s.apply(tag_bulk_item, axis=1)
+
+            # ------------------------------------------
+            # 이제 안심하고 거래처 통합 등 기존 로직 진행
+            # ------------------------------------------
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
@@ -211,7 +229,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # 1. kg 단위 추출 (무게 계산용)
+            # 1. kg 단위 추출
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
                 kg_match = re.search(r'([\d\.]+)(kg)', text)
@@ -238,25 +256,23 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
                 # =======================================================
-                # [시다의 이중 이름표 전략] - 여기가 핵심!
+                # [시다의 이중 이름표 전략]
                 # =======================================================
                 
-                # (1) 화면용 이름: '벌크' 절대 지우지 않음. 무게 숫자(300g)만 지움.
-                # -> 이렇게 해야 화면에서 '가지'와 '가지(벌크)'가 다른 놈으로 인식됨.
+                # (1) 화면용 이름: '벌크' 절대 지우지 않음. 무게 숫자만 지움.
                 def make_display_name(x):
                     s = str(x)
-                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s) # (300g) 삭제
+                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip()
                     s = s.replace(' ', '') 
                     return s
 
                 # (2) 문자/정렬용 이름: '벌크'를 지워서 부모(가지)와 똑같게 만듦
-                # -> 이걸로 정렬하면 '가지'와 '가지(벌크)'가 가족 상봉함.
                 def make_parent_name(x):
                     s = str(x)
-                    s = re.sub(r'\(?벌크\)?', '', s) # 벌크 삭제
+                    s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
-                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s) # 무게 삭제
+                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').replace('  ', ' ').strip()
                     s = s.replace(' ', '')
                     return s
@@ -282,11 +298,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 agg_disp.rename(columns={'clean_phone': '전화번호'}, inplace=True)
             else: agg_disp['전화번호'] = ''
             
-            # 여기서 '__display_name'을 '상품명'으로 보여줌 (벌크 보임)
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['판매량'] > 0]
             
-            # [정렬 핵심] 부모이름(__clean_parent) -> 본인이름(상품명) 순서
+            # [정렬 핵심] 부모이름 -> 본인이름
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
 
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
