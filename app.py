@@ -152,7 +152,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 21.10 (UI개선)") 
+    st.caption("Ver 21.20 (버그픽스)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -352,12 +352,11 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 phone = str(v_data_disp['전화번호'].iloc[0]) if not pd.isna(v_data_disp['전화번호'].iloc[0]) else ''
                                 in_phone = st.text_input("전화번호", value=phone, key=f"p_ext_{vendor}", label_visibility="collapsed")
                                 st.write("")
-                                # [UI 개선] 버튼을 입력창 바로 아래 배치
                                 if st.button(f"🚀 {vendor} 발송", key=f"b_ext_{vendor}", type="primary", use_container_width=True):
                                     ok = send_and_log(vendor, clean_phone_number(in_phone), st.session_state.get(f"m_ext_{vendor}", default_msg))
                                     if ok:
                                         st.session_state.sent_history.add(vendor)
-                                        st.success("✅ 발송이 성공하였습니다") # 성공 메시지 바로 표시
+                                        st.success("✅ 발송이 성공하였습니다") 
                                         time.sleep(1.5)
                                         st.rerun()
                                     else:
@@ -387,7 +386,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             
                             st.markdown("---")
                             
-                            # [WYSIWYG] 화면 데이터를 그대로 사용해 문자 생성
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
                             auto_msg_lines.extend(generate_sms_text(df_main_disp))
                             auto_msg_lines.append("")
@@ -400,12 +398,13 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 ph = str(df_main_disp['전화번호'].iloc[0]) if not pd.isna(df_main_disp['전화번호'].iloc[0]) else ''
                                 in_phone = st.text_input("전화번호", value=ph, key=f"p_v10_{main_vendor}", label_visibility="collapsed")
                                 st.write("")
-                                # [UI 개선] 버튼을 입력창 바로 아래 배치
                                 if st.button(f"🚀 {main_vendor} 발송", key=f"b_v10_{main_vendor}", type="primary", use_container_width=True):
-                                    ok = send_and_log(main_vendor, clean_phone_number(in_phone), final_msg)
+                                    # [수정] 변수 오류 해결: final_msg -> 실제 메시지 내용 가져오기
+                                    msg_to_send = st.session_state.get(f"m_v10_{main_vendor}", default_msg)
+                                    ok = send_and_log(main_vendor, clean_phone_number(in_phone), msg_to_send)
                                     if ok:
                                         st.session_state.sent_history.add(main_vendor)
-                                        st.success("✅ 발송이 성공하였습니다") # 성공 메시지 바로 표시
+                                        st.success("✅ 발송이 성공하였습니다") 
                                         time.sleep(1.5)
                                         st.rerun()
                                     else:
