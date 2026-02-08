@@ -10,6 +10,7 @@ import uuid
 import datetime
 import requests
 import numpy as np
+import plotly.express as px  # [추가] 차트 그리기용 라이브러리
 
 # ==========================================
 # [설정] 서버 파일 경로
@@ -128,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.31 (오류수정)") 
+    st.caption("Ver 18.32 (제로웨이스트차트)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -186,8 +187,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
-                
-                # 거래처명 통합: 지족점야채(벌크) -> 지족점야채
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -211,7 +210,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # 1. kg 단위 추출
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
                 kg_match = re.search(r'([\d\.]+)(kg)', text)
@@ -227,23 +225,19 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             if s_item:
                 def calc_unit_weight(row):
                     w = 0.0
-                    if s_spec and pd.notna(row.get(s_spec)):
-                        w = extract_kg(row[s_spec])
-                    if w == 0 and pd.notna(row.get(s_item)):
-                        w = extract_kg(row[s_item])
+                    if s_spec and pd.notna(row.get(s_spec)): w = extract_kg(row[s_spec])
+                    if w == 0 and pd.notna(row.get(s_item)): w = extract_kg(row[s_item])
                     return w
 
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-                # (1) 화면용: 무게 숫자만 삭제 (벌크 글자는 건드리지 않음)
                 def make_display_name(x):
                     s = str(x)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
-                # (2) 문자용: 벌크 삭제 (농부에게 보낼 땐 합침)
                 def make_parent_name(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -255,7 +249,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
-            # [집계 1] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -269,13 +262,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['판매량'] > 0]
-            
-            # 정렬: 부모 -> 본인
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
-            # [집계 2] 문자용 (부모 기준 통합)
             agg_sms = agg_disp.groupby(['업체명', '__clean_parent']).agg({
                 '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
             }).reset_index()
@@ -338,7 +328,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                         is_sent = main_vendor in st.session_state.sent_history
                         
                         with st.expander(f"🚚 {main_vendor} (매출: {total_sales:,.0f}원)", expanded=not is_sent):
-                            st.markdown(f"**📦 상세 실적 (엑셀 기준)**")
+                            st.markdown(f"**📦 상세 실적**")
                             d_show = df_main_disp.copy()
                             d_show['발주표시'] = d_show.apply(lambda x: f"{int(x['발주_중량'])}kg" if x['__total_kg'] > 0 else f"{int(x['발주_수량'])}개", axis=1)
                             d_show['총판매액'] = d_show['총판매액'].apply(lambda x: f"{x:,.0f}")
@@ -366,8 +356,11 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             with c2: st.text_area("내용", value=default_msg, height=250, key=f"m_v10_{main_vendor}")
 
 elif menu == "♻️ 제로웨이스트 (분석)":
+    # ==========================================
+    # [시다] 제로웨이스트 대시보드 (원형차트 Ver)
+    # ==========================================
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
-    st.info("💡 '일반 포장' 상품과 '벌크(무포장)' 상품의 판매 비율을 분석합니다.")
+    st.info("💡 '일반' vs '벌크(무포장)' 판매 비중을 원형 차트로 비교합니다.")
     
     with st.expander("📂 판매 데이터 업로드 (발주탭과 동일 파일)", expanded=True):
         up_zw_list = st.file_uploader("판매 실적 파일", type=['xlsx', 'csv'], accept_multiple_files=True, key='zw_up')
@@ -383,6 +376,7 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_zw.columns.tolist())
             
             if s_item and s_amt:
+                # 1. 부모 이름 찾기 (가지(벌크) -> 가지)
                 def get_parent_zw(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -394,27 +388,50 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                df_zw['is_bulk'] = df_zw[s_item].astype(str).apply(lambda x: '벌크' in x or 'bulk' in x.lower())
+                # 2. 타입 태깅 (일반 vs 벌크)
+                def get_type_tag(x):
+                    if '벌크' in str(x) or 'bulk' in str(x).lower(): return '벌크(무포장)'
+                    return '일반(포장)'
                 
-                grp = df_zw.groupby('__parent').agg(
-                    total_sales=(s_amt, 'sum'),
-                    bulk_sales=(s_amt, lambda x: x[df_zw.loc[x.index, 'is_bulk']].sum())
-                ).reset_index()
+                df_zw['__type'] = df_zw[s_item].apply(get_type_tag)
                 
-                grp['bulk_ratio'] = (grp['bulk_sales'] / grp['total_sales']) * 100
-                grp = grp[grp['bulk_sales'] > 0].sort_values('bulk_ratio', ascending=False)
+                # 3. 집계: [부모이름, 타입] 별 매출 합계
+                grp = df_zw.groupby(['__parent', '__type'])[s_amt].sum().reset_index()
                 
+                # 4. 벌크가 존재하는 품목만 필터링 (비교할 가치가 있는 것들)
+                parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
+                target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
+                
+                # 5. 시각화 (도넛 차트 Grid)
                 st.divider()
-                st.markdown(f"**총 {len(grp)}개 품목에서 벌크 판매 발생**")
+                st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
                 
-                for _, r in grp.iterrows():
-                    ratio = r['bulk_ratio']
-                    st.write(f"**{r['__parent']}**")
-                    st.progress(ratio / 100, text=f"제로웨이스트 비율: {ratio:.1f}% (벌크 {int(r['bulk_sales']):,}원 / 전체 {int(r['total_sales']):,}원)")
+                # Grid Layout (한 줄에 2개씩)
+                unique_parents = sorted(target_df['__parent'].unique())
+                cols = st.columns(2) # 2열 배치
+                
+                for i, parent in enumerate(unique_parents):
+                    # 현재 그릴 데이터
+                    subset = target_df[target_df['__parent'] == parent]
+                    
+                    # 도넛 차트 생성 (Plotly)
+                    fig = px.pie(subset, values=s_amt, names='__type', 
+                                 title=f"<b>{parent}</b>",
+                                 hole=0.4, # 도넛 모양
+                                 color='__type',
+                                 color_discrete_map={'벌크(무포장)': '#28a745', '일반(포장)': '#dc3545'}) # 초록 vs 빨강
+                    
+                    fig.update_layout(showlegend=True, height=300, margin=dict(t=30, b=0, l=0, r=0))
+                    
+                    # 2열 교차 배치
+                    with cols[i % 2]:
+                        st.plotly_chart(fig, use_container_width=True)
+
             else:
                 st.error("데이터 형식을 확인할 수 없습니다.")
 
 elif menu == "📢 품앗이 이음 (마케팅)":
+    # (기존 마케팅 코드 유지)
     with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
         up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
 
