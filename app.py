@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 19.90 (거래처대통합)") 
+    st.caption("Ver 20.00 (거래처명완전통일)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -148,7 +148,7 @@ menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨�
 
 if menu == "📦 품앗이 오더 (자동 발주)":
     # -----------------------------------------------------
-    # [발주 탭: 거래처 통합 및 수량 0 보정]
+    # [발주 탭: 거래처 강제 통합 로직 적용]
     # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
@@ -186,16 +186,26 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
-            # 1. 거래처 통합 전처리 (지족점야채(벌크) -> 지족점야채)
+            
+            # [핵심] 거래처명 정규화 (Normalization) 함수
+            # '지족점야채(벌크)'든 '지족점 야채'든 모두 '지족점야채'로 통일
+            def normalize_vendor(name):
+                n = str(name).replace(' ', '')
+                if '지족' in n and '야채' in n: return '지족점야채'
+                if '지족' in n and '과일' in n: return '지족점과일'
+                if '지족' in n and '정육' in n: return '지족점정육'
+                if '지족' in n and '공동' in n: return '지족점_공동구매'
+                if '지족' in n and '매장' in n: return '지족매장'
+                # 그 외 (외부업체)는 벌크 괄호만 제거
+                n = re.sub(r'\(?벌크\)?', '', n)
+                return n
+
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 
-                # 거래처명 정제 ('벌크' 제거, 공백 제거)
-                df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
-                
-                # [핵심] 정제된 거래처명을 원본 컬럼에 덮어쓰기! 
-                # 그래야 그룹화할 때 같은 업체로 묶입니다.
-                df_s[s_farmer] = df_s['clean_farmer']
+                # 1. 거래처명 강제 통일 적용
+                df_s['clean_farmer'] = df_s[s_farmer].apply(normalize_vendor)
+                df_s[s_farmer] = df_s['clean_farmer'] # 원본 덮어쓰기 (중요!)
 
                 def classify(name):
                     clean = name.replace(' ', '')
@@ -215,12 +225,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target = df_s.copy()
                 df_target['구분'] = "일반업체"
 
-            # 2. 숫자 변환 및 [수량 0 보정]
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # [핵심 보정] 수량이 0이거나 음수인데, 매출액이 있으면 수량을 1로 강제 변경
-            # -> 이 코드가 봄동(벌크)을 살려냅니다.
+            # [안전장치] 수량이 0이어도 매출이 있으면 수량 1로 보정 (혹시 모를 상황 대비)
             df_target.loc[(df_target[s_qty] <= 0) & (df_target[s_amt] > 0), s_qty] = 1
 
             def extract_kg(text):
@@ -276,7 +284,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             
-            # [필터] 판매량이 0이라도(벌크라 수량 없을때), 총판매액(매출)이 있으면 무조건 보여줌!
+            # 매출이 0보다 크면 무조건 표시
             agg_disp = agg_disp[agg_disp['총판매액'] > 0]
             
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
@@ -292,8 +300,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             def make_order_line_sms(row):
                 item_name = row['__clean_parent']
-                # 수량이 0이어도 매출이 있어서 잡힌 경우 -> 무게 표시 우선, 없으면 1개라도 발주하는 셈 치고 수량 표시
-                qty_str = ""
                 if row['__total_kg'] > 0:
                     qty_str = f"{int(row['발주_중량'])}kg"
                 else:
@@ -428,7 +434,7 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 
                 st.divider()
                 if len(parents_with_bulk) == 0:
-                    st.info("현재 '벌크(무포장)'로 분류된 데이터가 없습니다.")
+                    st.info("현재 '벌크(무포장)'로 분류된 데이터가 없습니다. 라벨 변경 후 데이터를 올려주세요.")
                 else:
                     st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
                     unique_parents = sorted(target_df['__parent'].unique())
