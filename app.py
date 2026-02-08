@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.70 (별표제거)") 
+    st.caption("Ver 19.00 (최종완성)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -147,7 +147,9 @@ st.title("🤖 시다 워크 (Sida Works)")
 menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨이스트 (분석)", "📢 품앗이 이음 (마케팅)"], horizontal=True)
 
 if menu == "📦 품앗이 오더 (자동 발주)":
-    # (발주 탭 코드는 이전과 동일 - 분량상 유지)
+    # -----------------------------------------------------
+    # [발주 탭]
+    # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
@@ -184,6 +186,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
+            # 발주용 전처리: 거래처명에 '벌크' 있으면 상품명에 (벌크) 추가
             if s_farmer and s_item:
                 def tag_bulk_item(row):
                     f_name = str(row[s_farmer])
@@ -195,6 +198,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
+                # 거래처명 통합
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -240,12 +244,14 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
+                # (1) 화면용
                 def make_display_name(x):
                     s = str(x)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
+                # (2) 문자용 (통합)
                 def make_parent_name(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -257,6 +263,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
+            # [집계 1] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -270,10 +277,12 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['판매량'] > 0]
+            
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
+            # [집계 2] 문자용
             agg_sms = agg_disp.groupby(['업체명', '__clean_parent']).agg({
                 '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
             }).reset_index()
@@ -359,6 +368,9 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             with c2: st.text_area("내용", value=default_msg, height=250, key=f"m_v10_{main_vendor}")
 
 elif menu == "♻️ 제로웨이스트 (분석)":
+    # -----------------------------------------------------
+    # [제로웨이스트 탭]
+    # -----------------------------------------------------
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
     st.info("💡 '일반' vs '벌크' (명시된 것만 인정) 판매 비중을 원형 차트로 비교합니다.")
     
@@ -377,20 +389,21 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             
             if s_item and s_amt:
                 
-                # [수정된 핵심] 부모 이름 찾기 (별표 * 까지 삭제!!!)
+                # 1. 부모 이름 찾기 (별표/괄호 등 모든 불순물 제거 -> 가족 통합)
                 def get_parent_zw(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
+                    # 별표(*)와 괄호() 및 그 안의 내용 모두 삭제
                     s = re.sub(r'\(.*?\)', '', s) 
-                    s = s.replace('*', '')  # [NEW] 별표(*) 삭제 추가!
+                    s = s.replace('*', '')  
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
                 
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                # 타입 태깅 (상품명 OR 거래처명 확인)
+                # 2. 타입 태깅 (상품명 OR 거래처명 확인)
                 def get_type_tag(row):
                     i_name = str(row[s_item])
                     f_name = str(row[s_farmer]) if s_farmer and pd.notna(row[s_farmer]) else ""
