@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 20.00 (거래처명완전통일)") 
+    st.caption("Ver 20.10 (화면문자동기화)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -147,9 +147,6 @@ st.title("🤖 시다 워크 (Sida Works)")
 menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨이스트 (분석)", "📢 품앗이 이음 (마케팅)"], horizontal=True)
 
 if menu == "📦 품앗이 오더 (자동 발주)":
-    # -----------------------------------------------------
-    # [발주 탭: 거래처 강제 통합 로직 적용]
-    # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
@@ -186,9 +183,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
-            
-            # [핵심] 거래처명 정규화 (Normalization) 함수
-            # '지족점야채(벌크)'든 '지족점 야채'든 모두 '지족점야채'로 통일
+            # 1. 거래처 통합 정규화 (지족점야채 = 지족점야채(벌크))
             def normalize_vendor(name):
                 n = str(name).replace(' ', '')
                 if '지족' in n and '야채' in n: return '지족점야채'
@@ -196,16 +191,13 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 if '지족' in n and '정육' in n: return '지족점정육'
                 if '지족' in n and '공동' in n: return '지족점_공동구매'
                 if '지족' in n and '매장' in n: return '지족매장'
-                # 그 외 (외부업체)는 벌크 괄호만 제거
                 n = re.sub(r'\(?벌크\)?', '', n)
                 return n
 
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
-                
-                # 1. 거래처명 강제 통일 적용
                 df_s['clean_farmer'] = df_s[s_farmer].apply(normalize_vendor)
-                df_s[s_farmer] = df_s['clean_farmer'] # 원본 덮어쓰기 (중요!)
+                df_s[s_farmer] = df_s['clean_farmer'] # 원본 덮어쓰기
 
                 def classify(name):
                     clean = name.replace(' ', '')
@@ -225,10 +217,11 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target = df_s.copy()
                 df_target['구분'] = "일반업체"
 
+            # 2. 숫자 변환 및 [수량 0 강제 보정]
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # [안전장치] 수량이 0이어도 매출이 있으면 수량 1로 보정 (혹시 모를 상황 대비)
+            # 매출은 있는데 수량이 0 이하면, 수량을 1로 강제! (그래야 문자에도 찍힘)
             df_target.loc[(df_target[s_qty] <= 0) & (df_target[s_amt] > 0), s_qty] = 1
 
             def extract_kg(text):
@@ -270,7 +263,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
-            # [집계]
+            # [집계 1] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -284,14 +277,14 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             
-            # 매출이 0보다 크면 무조건 표시
+            # [필터] 돈(매출)이 1원이라도 있으면 무조건 합격!
             agg_disp = agg_disp[agg_disp['총판매액'] > 0]
             
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
-            # [집계 2] 문자용
+            # [집계 2] 문자용 (중요: agg_disp와 동일한 기준으로 생성)
             agg_sms = agg_disp.groupby(['업체명', '__clean_parent']).agg({
                 '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
             }).reset_index()
@@ -303,6 +296,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 if row['__total_kg'] > 0:
                     qty_str = f"{int(row['발주_중량'])}kg"
                 else:
+                    # 수량이 0이어도 강제로 1로 만들었기 때문에 이제 1개 이상으로 나옴
                     qty_str = f"{int(row['발주_수량'])}개"
                 return f"- {item_name}: {qty_str}"
 
@@ -350,21 +344,27 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     for main_vendor in target_order:
                         df_main_disp = df_int[df_int['업체명'] == main_vendor]
                         if df_main_disp.empty: continue
+                        
+                        # [확인] 여기서 agg_sms를 다시 필터링해서 가져오므로, 위에서 살린 봄동이 들어옴
                         df_main_sms = df_int_sms[df_int_sms['업체명'] == main_vendor]
+                        
                         total_sales = df_main_disp['총판매액'].sum()
                         is_sent = main_vendor in st.session_state.sent_history
+                        
                         with st.expander(f"🚚 {main_vendor} (매출: {total_sales:,.0f}원)", expanded=not is_sent):
                             st.markdown(f"**📦 상세 실적 (엑셀 기준)**")
                             d_show = df_main_disp.copy()
                             d_show['발주표시'] = d_show.apply(lambda x: f"{int(x['발주_중량'])}kg" if x['__total_kg'] > 0 else f"{int(x['발주_수량'])}개", axis=1)
                             d_show['총판매액'] = d_show['총판매액'].apply(lambda x: f"{x:,.0f}")
                             st.dataframe(d_show[['상품명', '발주표시', '총판매액']], hide_index=True, use_container_width=True)
+                            
                             st.markdown("##### 📝 통합 발주 문자")
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
                             for _, r in df_main_sms.iterrows(): auto_msg_lines.append(make_order_line_sms(r))
                             auto_msg_lines.append("")
                             auto_msg_lines.append("잘 부탁드립니다.")
                             default_msg = "\n".join(auto_msg_lines)
+
                             c1, c2 = st.columns([1, 2])
                             with c1:
                                 ph = str(df_main_disp['전화번호'].iloc[0]) if not pd.isna(df_main_disp['전화번호'].iloc[0]) else ''
@@ -380,9 +380,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             with c2: st.text_area("내용", value=default_msg, height=250, key=f"m_v10_{main_vendor}")
 
 elif menu == "♻️ 제로웨이스트 (분석)":
-    # -----------------------------------------------------
-    # [제로웨이스트 탭: 현장 중심 심플 로직]
-    # -----------------------------------------------------
+    # (제로웨이스트 탭: 현장 중심 심플 로직 - 그대로 유지)
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
     st.info("💡 **[현장 중심 로직]** 라벨에 '벌크'가 찍힌 상품(무포장)과 그렇지 않은 상품(소포장)을 자동으로 구분합니다.")
     
