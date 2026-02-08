@@ -128,7 +128,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.30 (목적별분리)") 
+    st.caption("Ver 18.31 (오류수정)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -187,7 +187,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
                 
-                # 거래처명 통합: 지족점야채(벌크) -> 지족점야채 (발주처는 하나니까!)
+                # 거래처명 통합: 지족점야채(벌크) -> 지족점야채
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -236,7 +236,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-                # (1) 화면용: 무게 숫자만 삭제 (벌크 글자는 건드리지 않음 - 엑셀에 있는 대로!)
+                # (1) 화면용: 무게 숫자만 삭제 (벌크 글자는 건드리지 않음)
                 def make_display_name(x):
                     s = str(x)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
@@ -347,7 +347,8 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             st.markdown("##### 📝 통합 발주 문자")
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
                             for _, r in df_main_sms.iterrows(): auto_msg_lines.append(make_order_line_sms(r))
-                            auto_msg_lines.append("", "잘 부탁드립니다.")
+                            auto_msg_lines.append("")
+                            auto_msg_lines.append("잘 부탁드립니다.")
                             default_msg = "\n".join(auto_msg_lines)
 
                             c1, c2 = st.columns([1, 2])
@@ -355,14 +356,16 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 ph = str(df_main_disp['전화번호'].iloc[0]) if not pd.isna(df_main_disp['전화번호'].iloc[0]) else ''
                                 in_phone = st.text_input("전화번호", value=ph, key=f"p_v10_{main_vendor}")
                                 if not is_sent and st.button(f"🚀 전송", key=f"b_v10_{main_vendor}", type="primary"):
-                                    # 전송 로직 동일
-                                    pass
+                                    if not st.session_state.api_key: st.error("API Key 필요")
+                                    else:
+                                        final_msg = st.session_state.get(f"m_v10_{main_vendor}", default_msg)
+                                        ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), final_msg)
+                                        if ok:
+                                            st.session_state.sent_history.add(main_vendor)
+                                            st.rerun()
                             with c2: st.text_area("내용", value=default_msg, height=250, key=f"m_v10_{main_vendor}")
 
 elif menu == "♻️ 제로웨이스트 (분석)":
-    # ----------------------------------------------
-    # [시다] 제로웨이스트 전용 분석 탭
-    # ----------------------------------------------
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
     st.info("💡 '일반 포장' 상품과 '벌크(무포장)' 상품의 판매 비율을 분석합니다.")
     
@@ -380,7 +383,6 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_zw.columns.tolist())
             
             if s_item and s_amt:
-                # 1. 전처리: 부모 이름 찾기
                 def get_parent_zw(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -392,10 +394,8 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                # 2. 벌크 여부 판별
                 df_zw['is_bulk'] = df_zw[s_item].astype(str).apply(lambda x: '벌크' in x or 'bulk' in x.lower())
                 
-                # 3. 집계: 부모 품목별 [전체 매출] vs [벌크 매출]
                 grp = df_zw.groupby('__parent').agg(
                     total_sales=(s_amt, 'sum'),
                     bulk_sales=(s_amt, lambda x: x[df_zw.loc[x.index, 'is_bulk']].sum())
@@ -404,21 +404,17 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 grp['bulk_ratio'] = (grp['bulk_sales'] / grp['total_sales']) * 100
                 grp = grp[grp['bulk_sales'] > 0].sort_values('bulk_ratio', ascending=False)
                 
-                # 4. 시각화
                 st.divider()
                 st.markdown(f"**총 {len(grp)}개 품목에서 벌크 판매 발생**")
                 
                 for _, r in grp.iterrows():
-                    # 진행률 바 Custom
                     ratio = r['bulk_ratio']
-                    bar_color = "green" if ratio > 50 else "orange"
                     st.write(f"**{r['__parent']}**")
                     st.progress(ratio / 100, text=f"제로웨이스트 비율: {ratio:.1f}% (벌크 {int(r['bulk_sales']):,}원 / 전체 {int(r['total_sales']):,}원)")
             else:
                 st.error("데이터 형식을 확인할 수 없습니다.")
 
 elif menu == "📢 품앗이 이음 (마케팅)":
-    # (기존 마케팅 코드 유지)
     with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
         up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
 
