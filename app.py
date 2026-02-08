@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 20.30 (완전통합성공)") 
+    st.caption("Ver 20.40 (별표완전제거)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -148,7 +148,7 @@ menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨�
 
 if menu == "📦 품앗이 오더 (자동 발주)":
     # -----------------------------------------------------
-    # [발주 탭: 거래처 통합, 수량 0 보정, 별표 제거]
+    # [발주 탭]
     # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
@@ -224,7 +224,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # 매출이 있는데 수량이 0 이하면, 1개로 강제!
             df_target.loc[(df_target[s_qty] <= 0) & (df_target[s_amt] > 0), s_qty] = 1
 
             def extract_kg(text):
@@ -249,15 +248,18 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
+                # [수정] 화면용 이름: 별표(*) 제거
                 def make_display_name(x):
                     s = str(x)
+                    s = s.replace('*', '') # 여기서 별표 제거!
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
+                # [수정] 부모 이름: 별표(*) 제거 (문자 그룹핑용)
                 def make_parent_name(x):
                     s = str(x)
-                    s = s.replace('*', '') # [NEW] 별표 제거! (*가지* -> 가지)
+                    s = s.replace('*', '') # 여기서도 별표 제거!
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
@@ -281,22 +283,17 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             
-            # [필터] 매출 > 0이면 무조건 통과
             agg_disp = agg_disp[agg_disp['총판매액'] > 0]
-            
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
             tab1, tab2 = st.tabs(["🏢 외부업체", "🏪 지족 사입"])
             
-            # 문자열 생성 헬퍼 (별표 제거된 부모이름으로 통합)
             def generate_sms_text(df_source):
-                # 1. 부모 품목명(__clean_parent)으로 그룹핑 (별표/괄호 다 떼고 합침)
                 grouped = df_source.groupby('__clean_parent').agg({
                     '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
                 }).reset_index()
-                
                 lines = []
                 for _, row in grouped.iterrows():
                     qty_str = ""
@@ -316,8 +313,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     for vendor in targets:
                         is_sent = vendor in st.session_state.sent_history
                         v_data_disp = df_ext[df_ext['업체명'] == vendor]
-                        
-                        # [WYSIWYG] 화면 데이터를 그대로 사용해 문자 생성
                         msg_lines = [f"[{vendor} 발주]"]
                         msg_lines.extend(generate_sms_text(v_data_disp))
                         msg_lines.append("잘 부탁드립니다!")
@@ -358,7 +353,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             st.dataframe(d_show[['상품명', '발주표시', '총판매액']], hide_index=True, use_container_width=True)
                             
                             st.markdown("##### 📝 통합 발주 문자")
-                            # [WYSIWYG] 화면 데이터를 그대로 사용해 문자 생성
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
                             auto_msg_lines.extend(generate_sms_text(df_main_disp))
                             auto_msg_lines.append("")
