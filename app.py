@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 19.20 (인간지능보완)") 
+    st.caption("Ver 19.40 (현장중심)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -147,9 +147,6 @@ st.title("🤖 시다 워크 (Sida Works)")
 menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨이스트 (분석)", "📢 품앗이 이음 (마케팅)"], horizontal=True)
 
 if menu == "📦 품앗이 오더 (자동 발주)":
-    # -----------------------------------------------------
-    # [발주 탭]
-    # -----------------------------------------------------
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("💰 예산 (원)", value=500000, step=10000)
@@ -186,7 +183,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
-            # 발주용 전처리: 거래처명에 '벌크' 있으면 상품명에 (벌크) 추가
+            # 발주용 전처리 (거래처 통합 및 발주 확인용 꼬리표)
             if s_farmer and s_item:
                 def tag_bulk_item(row):
                     f_name = str(row[s_farmer])
@@ -198,7 +195,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
-                # 거래처명 통합
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -361,10 +357,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
 elif menu == "♻️ 제로웨이스트 (분석)":
     # -----------------------------------------------------
-    # [제로웨이스트 탭: 인간 지능 보완]
+    # [제로웨이스트 탭: 현장 중심 심플 로직]
     # -----------------------------------------------------
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
-    st.info("💡 **'진실의 필터'** 작동 중: 저울 라벨 때문에 '벌크'로 잡혔지만 사실은 포장된 상품이 있다면, 아래에서 선택해 주세요.")
+    st.info("💡 **[현장 개편 반영]** 라벨에 '벌크'가 찍힌 상품(무포장)과 그렇지 않은 상품(소포장)을 자동으로 구분합니다.")
     
     with st.expander("📂 판매 데이터 업로드 (발주탭과 동일 파일)", expanded=True):
         up_zw_list = st.file_uploader("판매 실적 파일", type=['xlsx', 'csv'], accept_multiple_files=True, key='zw_up')
@@ -394,45 +390,31 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
                 
-                # 2. 초기 자동 태깅 (최대한 넓게 벌크를 잡음)
-                def get_initial_type(row):
+                # 2. [심플 로직] 오직 텍스트로만 판단
+                # 라벨에 '벌크'가 있으면 벌크, 없으면 일반.
+                def get_type_tag(row):
                     i_name = str(row[s_item])
                     f_name = str(row[s_farmer]) if s_farmer and pd.notna(row[s_farmer]) else ""
                     
-                    # 상품명이나 거래처명에 '벌크'가 있으면 일단 벌크로 간주
+                    # 상품명이나 거래처명에 '벌크'가 명시되어 있는가?
                     if '벌크' in i_name or 'bulk' in i_name.lower(): return '벌크(무포장)'
                     if '벌크' in f_name: return '벌크(무포장)'
+                    
+                    # 그 외(무게가 있든 없든)는 일반 포장으로 간주
                     return '일반(포장)'
                 
-                df_zw['__type'] = df_zw.apply(get_initial_type, axis=1)
+                df_zw['__type'] = df_zw.apply(get_type_tag, axis=1)
                 
-                # 3. [핵심] 인간의 보정 (Human-in-the-loop)
-                # 데이터상으로는 벌크로 잡혔지만, 실제로는 아닌 것들을 사용자가 직접 선택
-                potential_bulk_items = df_zw[df_zw['__type'] == '벌크(무포장)'][s_item].unique()
-                
-                if len(potential_bulk_items) > 0:
-                    st.divider()
-                    st.markdown("##### 🕵️‍♂️ [보정] 아래 목록 중 '실제로는 포장된 상품'을 선택해주세요.")
-                    fake_bulk_list = st.multiselect(
-                        "선택하면 즉시 '일반(포장)'으로 변경되어 차트에 반영됩니다.",
-                        options=sorted(potential_bulk_items)
-                    )
-                    
-                    # 사용자가 선택한 아이템은 타입을 '일반(포장)'으로 강제 변경
-                    if fake_bulk_list:
-                        df_zw.loc[df_zw[s_item].isin(fake_bulk_list), '__type'] = '일반(포장)'
-                        st.success(f"✅ {len(fake_bulk_list)}개 품목을 '일반(포장)'으로 수정했습니다.")
-
-                # 4. 집계
+                # 3. 집계
                 grp = df_zw.groupby(['__parent', '__type'])[s_amt].sum().reset_index()
                 
-                # 5. 벌크가 (보정 후에도) 존재하는 품목만 필터링
+                # 4. 벌크가 존재하는 품목만 필터링
                 parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
                 target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
                 
                 st.divider()
                 if len(parents_with_bulk) == 0:
-                    st.info("현재 '벌크(무포장)'로 분류된 데이터가 없습니다.")
+                    st.info("현재 '벌크(무포장)'로 분류된 데이터가 없습니다. 라벨 변경 후 데이터를 올려주세요.")
                 else:
                     st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
                     unique_parents = sorted(target_df['__parent'].unique())
@@ -452,7 +434,7 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 st.error("데이터 형식을 확인할 수 없습니다.")
 
 elif menu == "📢 품앗이 이음 (마케팅)":
-    # (기존 마케팅 코드 생략 없이 유지)
+    # (기존 마케팅 코드 유지)
     with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
         up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
 
