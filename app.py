@@ -126,7 +126,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.5 (자동완성+벌크참고)") # 버전 확인용
+    st.caption("Ver 18.6 (벌크필터+자동완성고정)") # 버전 확인용
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -236,7 +236,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                         is_sent = vendor in st.session_state.sent_history
                         v_data = df_ext[df_ext['업체명'] == vendor]
                         
-                        # 자동완성 (일반업체는 수량까지 자동)
                         msg_lines = [f"[{vendor} 발주]"]
                         for _, r in v_data.iterrows(): msg_lines.append(f"- {r['상품명']}: {int(r['발주량'])}")
                         msg_lines.append("잘 부탁드립니다!")
@@ -257,23 +256,19 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                             st.rerun()
                             with c2: st.text_area("내용", value=default_msg, height=150, key=f"m_ext_{vendor}")
 
-            # --- [탭 2] 지족 사입 (심플 모드 + 벌크 통합 뷰) ---
+            # --- [탭 2] 지족 사입 (벌크필터 수정 + 입력창 갱신) ---
             with tab2:
                 df_int = agg_item[agg_item['구분'] == "지족(사입)"].copy()
                 if df_int.empty:
                     st.info("지족 사입 데이터가 없습니다.")
                 else:
-                    # 벌크 데이터 미리 추출
-                    df_bulk = df_int[df_int['업체명'].astype(str).str.contains("벌크") | df_int['업체명'].astype(str).str.contains("매장")].copy()
+                    # [수정] 벌크 필터 강화: 오직 '벌크' 글자가 있는 것만 가져옴 ("매장" 제외)
+                    df_bulk = df_int[df_int['업체명'].astype(str).str.contains("벌크")].copy()
                     
                     vendors = sorted(df_int['업체명'].unique())
-                    # 벌크는 발주 대상(문자 보낼 대상)이 아니므로 목록에서 제외하고 '참조용'으로만 씀
-                    # 단, 만약 벌크에도 문자를 보내야 한다면 리스트에 남겨둬야 함. (보통은 안 보냄)
-                    # 여기서는 '지족점(벌크)' 자체에는 문자를 안 보낸다고 가정하고(사입처가 아니니까), 리스트에서 뺌.
-                    # 하지만 혹시 모르니 다 보여주되, 상단에 배치.
                     
                     for vendor in vendors:
-                        # 벌크/매장은 발주 대상 아님 (건너뛰기) -> 과일/야채 발주할 때 참고용으로 보여줌
+                        # 벌크는 발주 대상 목록에서 제외
                         if "벌크" in vendor or "매장" in vendor: continue
 
                         is_sent = vendor in st.session_state.sent_history
@@ -283,28 +278,24 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                         icon = "✅" if is_sent else "🚚"
                         with st.expander(f"{icon} {vendor} (매출: {total_sales:,.0f}원)", expanded=not is_sent):
                             
-                            # 1. [핵심] 어제 판매 실적 (본인 데이터)
                             st.markdown(f"##### 📊 {vendor} 판매 실적")
                             display_df = v_data[['상품명', '판매량', '총판매액']].copy()
                             display_df['판매량'] = display_df['판매량'].astype(int)
                             display_df['총판매액'] = display_df['총판매액'].apply(lambda x: f"{x:,.0f}")
                             st.dataframe(display_df, hide_index=True, use_container_width=True)
                             
-                            # 2. [참고] 벌크 데이터 보여주기 (과일/야채인 경우에만)
                             if not df_bulk.empty:
-                                st.info("📦 **[참고] 지족점(벌크) 판매 내역** (함께 고려해서 발주하세요!)")
+                                st.info("📦 **[참고] 지족점(벌크) 판매 내역**")
                                 bulk_disp = df_bulk[['상품명', '판매량', '총판매액']].copy()
                                 bulk_disp['판매량'] = bulk_disp['판매량'].astype(int)
                                 bulk_disp['총판매액'] = bulk_disp['총판매액'].apply(lambda x: f"{x:,.0f}")
                                 st.dataframe(bulk_disp, hide_index=True, use_container_width=True)
 
-                            # 3. [입력] 자동완성 문자 창
                             st.markdown("##### 📝 발주 문자 작성")
                             
-                            # 자동완성 로직: 판매된 품목 이름을 쫙 깔아줌
                             auto_msg_lines = [f"안녕하세요 {vendor}입니다.", "", "[발주 요청]"]
                             for _, r in v_data.iterrows():
-                                auto_msg_lines.append(f"- {r['상품명']}: ") # 뒤에 빈칸
+                                auto_msg_lines.append(f"- {r['상품명']}: ") 
                             auto_msg_lines.append("")
                             auto_msg_lines.append("잘 부탁드립니다.")
                             default_msg = "\n".join(auto_msg_lines)
@@ -312,28 +303,27 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                             c1, c2 = st.columns([1, 2])
                             with c1:
                                 phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
-                                in_phone = st.text_input("전화번호", value=phone, key=f"p_int_{vendor}")
-                                if not is_sent and st.button(f"🚀 전송", key=f"b_int_{vendor}", type="primary"):
+                                in_phone = st.text_input("전화번호", value=phone, key=f"p_v6_{vendor}")
+                                if not is_sent and st.button(f"🚀 전송", key=f"b_v6_{vendor}", type="primary"):
                                     if not st.session_state.api_key: st.error("API Key 필요")
                                     else:
-                                        final_msg = st.session_state.get(f"m_int_{vendor}", default_msg)
+                                        # [수정] Key를 변경하여(v6) 새로운 내용이 반영되도록 함
+                                        final_msg = st.session_state.get(f"m_v6_{vendor}", default_msg)
                                         ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), final_msg)
                                         if ok:
                                             st.session_state.sent_history.add(vendor)
                                             st.rerun()
                             with c2:
-                                st.text_area("내용", value=default_msg, height=250, key=f"m_int_{vendor}")
+                                # [수정] Key를 변경(m_v6_)하여 강제로 새 텍스트 로드
+                                st.text_area("내용", value=default_msg, height=250, key=f"m_v6_{vendor}")
 
         else: st.error("엑셀 형식을 확인해주세요.")
     else: st.info("판매 데이터를 업로드해주세요.")
 
 elif menu == "📢 품앗이 이음 (마케팅)":
-    # (마케팅 코드는 그대로 유지)
     with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
         up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
-    # ... (생략된 부분 없이 복사해서 쓰시면 됩니다. 위에 다 포함되어 있습니다.)
-    # 여기 마케팅 로직은 기존과 동일하므로 전체 코드 복사할 때 포함되어 있습니다.
-    
+
     df_ms, _ = load_data_smart(up_mkt_sales, 'sales')
     df_mm = None
     if os.path.exists(SERVER_MEMBER_FILE):
