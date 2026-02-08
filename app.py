@@ -129,7 +129,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.60 (가족대통합)") 
+    st.caption("Ver 18.70 (별표제거)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -294,14 +294,17 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     search = st.text_input(f"🔍 업체명 검색", key=f"s_ext")
                     all_v = sorted(df_ext['업체명'].unique())
                     targets = [v for v in all_v if search in v] if search else all_v
+                    
                     for vendor in targets:
                         is_sent = vendor in st.session_state.sent_history
                         v_data_disp = df_ext[df_ext['업체명'] == vendor]
                         v_data_sms = df_ext_sms[df_ext_sms['업체명'] == vendor]
+                        
                         msg_lines = [f"[{vendor} 발주]"]
                         for _, r in v_data_sms.iterrows(): msg_lines.append(make_order_line_sms(r))
                         msg_lines.append("잘 부탁드립니다!")
                         default_msg = "\n".join(msg_lines)
+                        
                         with st.expander(f"📩 {vendor}", expanded=not is_sent):
                             st.dataframe(v_data_disp[['상품명', '판매량', '총판매액']], hide_index=True, use_container_width=True)
                             c1, c2 = st.columns([1, 2])
@@ -374,16 +377,13 @@ elif menu == "♻️ 제로웨이스트 (분석)":
             
             if s_item and s_amt:
                 
-                # [수정된 핵심] 부모 이름 찾기 (모든 괄호 내용 과감히 삭제!)
-                # 가지(3개입) -> 가지
-                # 새송이버섯(무농약) -> 새송이버섯
-                # 가지(벌크) -> 가지
+                # [수정된 핵심] 부모 이름 찾기 (별표 * 까지 삭제!!!)
                 def get_parent_zw(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
-                    # [중요] 괄호 안의 모든 내용 삭제 (무농약, 3개입, 특 등등)
                     s = re.sub(r'\(.*?\)', '', s) 
+                    s = s.replace('*', '')  # [NEW] 별표(*) 삭제 추가!
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
                 
@@ -394,10 +394,8 @@ elif menu == "♻️ 제로웨이스트 (분석)":
                 def get_type_tag(row):
                     i_name = str(row[s_item])
                     f_name = str(row[s_farmer]) if s_farmer and pd.notna(row[s_farmer]) else ""
-                    
                     if '벌크' in i_name or 'bulk' in i_name.lower(): return '벌크(무포장)'
                     if '벌크' in f_name: return '벌크(무포장)'
-                    
                     return '일반(포장)'
                 
                 df_zw['__type'] = df_zw.apply(get_type_tag, axis=1)
