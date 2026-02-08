@@ -130,7 +130,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.10 (모든중량표시)") # 버전 확인용
+    st.caption("Ver 18.11 (벌크통합집계)") # 버전 업데이트
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -210,6 +210,16 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
+            # [시다 수정] 벌크 상품명 통일 (괄호 및 공백 제거로 합산 유도)
+            if s_item:
+                def normalize_bulk(x):
+                    s = str(x)
+                    if '벌크' in s: # '벌크'가 들어간 상품만 처리
+                        s = re.sub(r'\(.*?\)', '', s) # 괄호와 안의 내용 제거
+                        s = s.replace(' ', '') # 공백 제거
+                    return s
+                df_target[s_item] = df_target[s_item].apply(normalize_bulk)
+
             # 집계 (규격 포함)
             groupby_cols = [s_farmer, s_item, '구분']
             if s_spec: groupby_cols.append(s_spec) # 규격 컬럼이 있으면 무조건 포함
