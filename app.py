@@ -126,7 +126,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.7 (지족완전체)") # 버전 확인용
+    st.caption("Ver 18.8 (에러수정완료)") # 버전 확인용
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -187,7 +187,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 
                 def classify(name):
                     clean = name.replace(' ', '')
-                    # 지족(Y)는 제외
                     if "지족(Y)" in name or "지족(y)" in name: return "제외"
                     if "지족" in clean or "지족" in name: return "지족(사입)" 
                     elif clean in valid_set: return "일반업체" 
@@ -258,41 +257,41 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                             st.rerun()
                             with c2: st.text_area("내용", value=default_msg, height=150, key=f"m_ext_{vendor}")
 
-            # --- [탭 2] 지족 사입 (순서 지정 및 통합) ---
+            # --- [탭 2] 지족 사입 (에러 수정) ---
             with tab2:
                 df_int = agg_item[agg_item['구분'] == "지족(사입)"].copy()
                 if df_int.empty:
                     st.info("지족 사입 데이터가 없습니다.")
                 else:
-                    # [설정] 후니님이 정한 표시 순서 (지족(Y)는 제외됨)
                     target_order = ["지족점야채", "지족점과일", "지족매장", "지족점정육", "지족점_공동구매"]
-                    # [설정] 본품과 짝꿍인 벌크 이름 매핑
                     bulk_map = {
                         "지족점야채": "지족점야채(벌크)",
                         "지족점과일": "지족점과일(벌크)"
                     }
 
                     for main_vendor in target_order:
-                        # 1. 메인 업체 데이터 (예: 지족점야채)
+                        # 1. 메인 업체
                         df_main = df_int[df_int['업체명'] == main_vendor]
                         
-                        # 2. 짝꿍 벌크 업체 데이터 (예: 지족점야채(벌크))
+                        # 2. 짝꿍 벌크 업체
                         bulk_name = bulk_map.get(main_vendor, "")
-                        df_bulk = df_int[df_int['업체명'] == bulk_name] if bulk_name else pd.DataFrame()
+                        if bulk_name:
+                            df_bulk = df_int[df_int['업체명'] == bulk_name]
+                        else:
+                            df_bulk = pd.DataFrame() # 짝꿍 없으면 빈 프레임
                         
-                        # 둘 다 데이터가 없으면 건너뜀 (화면에 안 보여줌)
                         if df_main.empty and df_bulk.empty: continue
 
-                        # 합계 매출 계산
-                        total_sales = df_main['총판매액'].sum() + df_bulk['총판매액'].sum()
-                        is_sent = main_vendor in st.session_state.sent_history
+                        # [수정] 합계 계산 시 .empty 체크해서 에러 방지
+                        sales_main = df_main['총판매액'].sum() if not df_main.empty else 0
+                        sales_bulk = df_bulk['총판매액'].sum() if not df_bulk.empty else 0
+                        total_sales = sales_main + sales_bulk
                         
+                        is_sent = main_vendor in st.session_state.sent_history
                         icon = "✅" if is_sent else "🚚"
                         
-                        # 메인 업체명으로 확장 패널 생성
                         with st.expander(f"{icon} {main_vendor} (통합매출: {total_sales:,.0f}원)", expanded=not is_sent):
                             
-                            # (1) 메인 상품 실적
                             if not df_main.empty:
                                 st.markdown(f"**📦 {main_vendor} 판매 실적**")
                                 disp_main = df_main[['상품명', '판매량', '총판매액']].copy()
@@ -300,7 +299,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 disp_main['총판매액'] = disp_main['총판매액'].apply(lambda x: f"{x:,.0f}")
                                 st.dataframe(disp_main, hide_index=True, use_container_width=True)
                             
-                            # (2) 벌크 상품 실적 (있으면 바로 아래에 보여줌)
                             if not df_bulk.empty:
                                 st.markdown(f"**📦 {bulk_name} 판매 실적**")
                                 disp_bulk = df_bulk[['상품명', '판매량', '총판매액']].copy()
@@ -308,17 +306,11 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 disp_bulk['총판매액'] = disp_bulk['총판매액'].apply(lambda x: f"{x:,.0f}")
                                 st.dataframe(disp_bulk, hide_index=True, use_container_width=True)
 
-                            # (3) 문자 입력창 (자동완성은 메인+벌크 모두 포함)
                             st.markdown("##### 📝 발주 문자 작성")
                             
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
-                            
-                            # 메인 품목 추가
-                            for _, r in df_main.iterrows():
-                                auto_msg_lines.append(f"- {r['상품명']}: ") 
-                            # 벌크 품목도 추가 (함께 발주할 수 있게)
-                            for _, r in df_bulk.iterrows():
-                                auto_msg_lines.append(f"- {r['상품명']}: ") 
+                            for _, r in df_main.iterrows(): auto_msg_lines.append(f"- {r['상품명']}: ") 
+                            for _, r in df_bulk.iterrows(): auto_msg_lines.append(f"- {r['상품명']}: ") 
                                 
                             auto_msg_lines.append("")
                             auto_msg_lines.append("잘 부탁드립니다.")
@@ -326,24 +318,23 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
                             c1, c2 = st.columns([1, 2])
                             with c1:
-                                # 전화번호는 메인 업체 것 사용 (없으면 벌크 것 사용)
                                 ph = ''
                                 if not df_main.empty and not pd.isna(df_main['전화번호'].iloc[0]):
                                     ph = str(df_main['전화번호'].iloc[0])
                                 elif not df_bulk.empty and not pd.isna(df_bulk['전화번호'].iloc[0]):
                                     ph = str(df_bulk['전화번호'].iloc[0])
                                     
-                                in_phone = st.text_input("전화번호", value=ph, key=f"p_v7_{main_vendor}")
-                                if not is_sent and st.button(f"🚀 전송", key=f"b_v7_{main_vendor}", type="primary"):
+                                in_phone = st.text_input("전화번호", value=ph, key=f"p_v8_{main_vendor}")
+                                if not is_sent and st.button(f"🚀 전송", key=f"b_v8_{main_vendor}", type="primary"):
                                     if not st.session_state.api_key: st.error("API Key 필요")
                                     else:
-                                        final_msg = st.session_state.get(f"m_v7_{main_vendor}", default_msg)
+                                        final_msg = st.session_state.get(f"m_v8_{main_vendor}", default_msg)
                                         ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), final_msg)
                                         if ok:
                                             st.session_state.sent_history.add(main_vendor)
                                             st.rerun()
                             with c2:
-                                st.text_area("내용", value=default_msg, height=250, key=f"m_v7_{main_vendor}")
+                                st.text_area("내용", value=default_msg, height=250, key=f"m_v8_{main_vendor}")
 
         else: st.error("엑셀 형식을 확인해주세요.")
     else: st.info("판매 데이터를 업로드해주세요.")
