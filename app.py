@@ -130,7 +130,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.15 (벌크스마트통합)") 
+    st.caption("Ver 18.17 (지능형분류)") 
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -189,6 +189,9 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
                 
+                # 거래처명 통합 ("지족점야채(벌크)" -> "지족점야채")
+                df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
+
                 def classify(name):
                     clean = name.replace(' ', '')
                     if "지족(Y)" in name or "지족(y)" in name: return "제외"
@@ -210,8 +213,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
-            # [시다의 핵심 로직] 무게 추출 및 스마트 상품명 정리
-            
             # 1. kg 단위 추출 (무게 계산용)
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
@@ -226,7 +227,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 return 0.0
 
             if s_item:
-                # 2. 총 중량 계산 (이름 바꾸기 전에 먼저 계산!)
+                # 2. 총 중량 계산
                 def calc_unit_weight(row):
                     w = 0.0
                     if s_spec and pd.notna(row.get(s_spec)):
@@ -238,21 +239,31 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
-                # 3. [이름 정리] '벌크'인 경우에만 괄호 속 숫자(무게) 제거
+                # =======================================================
+                # [시다의 지능형 이름 정리]
+                # 1. '벌크' 단어 삭제
+                # 2. '무게(300g)' 삭제
+                # 3. '등급(특,상,중,소)'는 유지 -> 이렇게 해야 대포감귤(중)이 살아남음!
+                # =======================================================
                 def smart_clean_name(x):
                     s = str(x)
-                    # '벌크'가 들어간 상품만 처리
-                    if '벌크' in s:
-                        # (378g), (1.2kg), (300) 같은 패턴 제거
-                        # 단, (특), (상) 같은 등급은 건드리지 않음 (숫자가 포함된 괄호만 타겟)
-                        s = re.sub(r'\(\d+(?:\.\d+)?(?:g|kg|G|KG)?\)', '', s)
-                        s = s.replace(' ', '') # 공백 제거
+                    
+                    # 1. 벌크, bulk 단어 삭제
+                    s = re.sub(r'\(?벌크\)?', '', s)
+                    s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
+
+                    # 2. 괄호 안의 무게 숫자만 삭제 (예: (300g), (1.2kg))
+                    # 숫자 + g/kg 패턴이 괄호 안에 있는 경우
+                    s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
+                    
+                    # 3. 찌꺼기 괄호 () 삭제 및 공백 정리
+                    s = s.replace('()', '').replace('  ', ' ').strip()
+                    s = s.replace(' ', '') # 최종적으로 공백 제거해서 매칭률 높임
                     return s
 
                 df_target[s_item] = df_target[s_item].apply(smart_clean_name)
 
             # 4. 집계 
-            # 이제 '가지(벌크)'는 하나로 합쳐지고, '감귤(중)'/'감귤(소)'는 따로 남습니다.
             groupby_cols = [s_farmer, s_item, '구분']
             
             agg_item = df_target.groupby(groupby_cols).agg({
@@ -284,7 +295,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             # [공통 문자 생성 함수]
             def make_order_line(row):
                 item_name = row['상품명']
-                # 벌크 상품이라 중량이 있으면 kg으로, 아니면 수량으로
                 if row['__total_kg'] > 0:
                     qty_str = f"{int(row['발주_중량'])}kg"
                 else:
@@ -332,27 +342,13 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     st.info("지족 사입 데이터가 없습니다.")
                 else:
                     target_order = ["지족점야채", "지족점과일", "지족매장", "지족점정육", "지족점_공동구매"]
-                    bulk_map = {
-                        "지족점야채": "지족점야채(벌크)",
-                        "지족점과일": "지족점과일(벌크)"
-                    }
-
+                    
                     for main_vendor in target_order:
-                        # 1. 메인 업체
                         df_main = df_int[df_int['업체명'] == main_vendor]
                         
-                        # 2. 짝꿍 벌크 업체
-                        bulk_name = bulk_map.get(main_vendor, "")
-                        if bulk_name:
-                            df_bulk = df_int[df_int['업체명'] == bulk_name]
-                        else:
-                            df_bulk = pd.DataFrame()
-                        
-                        if df_main.empty and df_bulk.empty: continue
+                        if df_main.empty: continue
 
-                        sales_main = df_main['총판매액'].sum() if not df_main.empty else 0
-                        sales_bulk = df_bulk['총판매액'].sum() if not df_bulk.empty else 0
-                        total_sales = sales_main + sales_bulk
+                        total_sales = df_main['총판매액'].sum()
                         
                         is_sent = main_vendor in st.session_state.sent_history
                         icon = "✅" if is_sent else "🚚"
@@ -365,23 +361,15 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 d['총판매액'] = d['총판매액'].apply(lambda x: f"{x:,.0f}")
                                 st.dataframe(d[['상품명', '발주표시', '총판매액']], hide_index=True, use_container_width=True)
 
-                            if not df_main.empty:
-                                st.markdown(f"**📦 {main_vendor} 판매 실적**")
-                                show_table(df_main)
+                            st.markdown(f"**📦 {main_vendor} 판매 실적**")
+                            show_table(df_main)
                             
-                            if not df_bulk.empty:
-                                st.markdown(f"**📦 {bulk_name} 판매 실적**")
-                                show_table(df_bulk)
-
-                            # (3) 문자 입력창
+                            # 문자 입력창
                             st.markdown("##### 📝 발주 문자 작성")
                             
                             auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
                             
-                            if not df_main.empty: 
-                                for _, r in df_main.iterrows(): auto_msg_lines.append(make_order_line(r))
-                            if not df_bulk.empty: 
-                                for _, r in df_bulk.iterrows(): auto_msg_lines.append(make_order_line(r))
+                            for _, r in df_main.iterrows(): auto_msg_lines.append(make_order_line(r))
                                 
                             auto_msg_lines.append("")
                             auto_msg_lines.append("잘 부탁드립니다.")
@@ -392,8 +380,6 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 ph = ''
                                 if not df_main.empty and not pd.isna(df_main['전화번호'].iloc[0]):
                                     ph = str(df_main['전화번호'].iloc[0])
-                                elif not df_bulk.empty and not pd.isna(df_bulk['전화번호'].iloc[0]):
-                                    ph = str(df_bulk['전화번호'].iloc[0])
                                     
                                 in_phone = st.text_input("전화번호", value=ph, key=f"p_v10_{main_vendor}")
                                 if not is_sent and st.button(f"🚀 전송", key=f"b_v10_{main_vendor}", type="primary"):
