@@ -126,7 +126,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.2 (지족패치)") # 버전 확인용
+    st.caption("Ver 18.3 (심플모드)") # 버전 확인용
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -185,11 +185,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
                 
-                # [강력해진 분류 로직] "지족" 글자만 있으면 무조건 사입!
                 def classify(name):
                     clean = name.replace(' ', '')
-                    if "지족" in clean or "지족" in name: return "지족(사입)" # 1순위: '지족' 포함 시 무조건
-                    elif clean in valid_set: return "일반업체" # 2순위: 등록된 업체
+                    if "지족" in clean or "지족" in name: return "지족(사입)" 
+                    elif clean in valid_set: return "일반업체" 
                     else: return "제외" if not show_all_data else "일반업체(강제)"
                 
                 df_s['구분'] = df_s['clean_farmer'].apply(classify)
@@ -206,6 +205,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             
+            # 집계 로직
             groupby_cols = [s_farmer, s_item, '구분']
             agg_item = df_target.groupby(groupby_cols)[[s_qty, s_amt]].sum().reset_index()
             
@@ -222,47 +222,79 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             agg_item['추정매입가'] = agg_item['평균판매가'] * purchase_rate
             agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
             
-            tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 건별 발주"])
+            tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 (심플 모드)"])
             
-            def render_order_tab(target_groups, tab_key):
-                df_tab = agg_item[agg_item['구분'].isin(target_groups)].copy()
-                if df_tab.empty:
+            # --- [탭 1] 일반 업체 (기존 로직: 상품별 나열) ---
+            with tab1:
+                df_ext = agg_item[agg_item['구분'].isin(["일반업체", "일반업체(강제)"])].copy()
+                if df_ext.empty:
                     st.info("데이터 없음")
-                    return
-                
-                total_tab = (df_tab['발주량'] * df_tab['추정매입가']).sum()
-                st.markdown(f"**📊 그룹 합계:** {total_tab:,.0f}원 / **품목 수:** {len(df_tab)}개")
+                else:
+                    search = st.text_input(f"🔍 업체명 검색", key=f"s_ext")
+                    all_v = sorted(df_ext['업체명'].unique())
+                    targets = [v for v in all_v if search in v] if search else all_v
 
-                search = st.text_input(f"🔍 업체명 검색", key=f"s_{tab_key}")
-                all_v = sorted(df_tab['업체명'].unique())
-                targets = [v for v in all_v if search in v] if search else all_v
+                    for vendor in targets:
+                        is_sent = vendor in st.session_state.sent_history
+                        v_data = df_ext[df_ext['업체명'] == vendor]
+                        msg_lines = [f"[{vendor} 발주]"]
+                        for _, r in v_data.iterrows(): msg_lines.append(f"- {r['상품명']}: {int(r['발주량'])}")
+                        msg_lines.append("잘 부탁드립니다!")
+                        default_msg = "\n".join(msg_lines)
+                        
+                        icon = "✅" if is_sent else "📩"
+                        with st.expander(f"{icon} {vendor} ({len(v_data)}품목)", expanded=not is_sent):
+                            c1, c2 = st.columns([1, 2])
+                            with c1:
+                                phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
+                                in_phone = st.text_input("전화번호", value=phone, key=f"p_ext_{vendor}")
+                                if not is_sent and st.button(f"🚀 전송", key=f"b_ext_{vendor}", type="primary"):
+                                    if not st.session_state.api_key: st.error("API Key 필요")
+                                    else:
+                                        ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), st.session_state.get(f"m_ext_{vendor}", default_msg))
+                                        if ok:
+                                            st.session_state.sent_history.add(vendor)
+                                            st.rerun()
+                            with c2:
+                                st.text_area("내용", value=default_msg, height=150, key=f"m_ext_{vendor}")
 
-                for vendor in targets:
-                    is_sent = vendor in st.session_state.sent_history
-                    v_data = df_tab[df_tab['업체명'] == vendor]
-                    msg_lines = [f"[{vendor} 발주]"]
-                    for _, r in v_data.iterrows(): msg_lines.append(f"- {r['상품명']}: {int(r['발주량'])}")
-                    msg_lines.append("잘 부탁드립니다!")
-                    default_msg = "\n".join(msg_lines)
+            # --- [탭 2] 지족 사입 (심플 모드: 매출만 보여주고, 내용은 빈칸) ---
+            with tab2:
+                df_int = agg_item[agg_item['구분'] == "지족(사입)"].copy()
+                if df_int.empty:
+                    st.info("지족 사입 데이터가 없습니다.")
+                else:
+                    # 상품별 나열 대신, 업체별 총 매출만 집계
+                    df_summary = df_int.groupby(['업체명', '전화번호'])['총판매액'].sum().reset_index()
+                    st.markdown("ℹ️ **안내:** 사입처는 판매 품목을 나열하지 않고, **매출 요약**만 보여드립니다. 발주 내용은 직접 작성해주세요.")
                     
-                    icon = "✅" if is_sent else "📩"
-                    with st.expander(f"{icon} {vendor}", expanded=not is_sent):
-                        c1, c2 = st.columns([1, 2])
-                        with c1:
-                            phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
-                            in_phone = st.text_input("전화번호", value=phone, key=f"p_{tab_key}_{vendor}")
-                            if not is_sent and st.button(f"🚀 전송", key=f"b_{tab_key}_{vendor}", type="primary"):
-                                if not st.session_state.api_key: st.error("API Key 필요")
-                                else:
-                                    ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), st.session_state.get(f"m_{tab_key}_{vendor}", default_msg))
-                                    if ok:
-                                        st.session_state.sent_history.add(vendor)
-                                        st.rerun()
-                        with c2:
-                            st.text_area("내용", value=default_msg, height=150, key=f"m_{tab_key}_{vendor}")
+                    for _, row in df_summary.iterrows():
+                        vendor = row['업체명']
+                        is_sent = vendor in st.session_state.sent_history
+                        total_sales = row['총판매액']
+                        
+                        # 심플한 템플릿
+                        default_msg = f"안녕하세요 {vendor}입니다.\n\n[발주 요청]\n\n잘 부탁드립니다."
+                        
+                        icon = "✅" if is_sent else "🚚"
+                        # 헤더에 총 매출액 표시 (참고용)
+                        with st.expander(f"{icon} {vendor} (오늘 매출: {total_sales:,.0f}원)", expanded=not is_sent):
+                            c1, c2 = st.columns([1, 2])
+                            with c1:
+                                phone = str(row['전화번호']) if not pd.isna(row['전화번호']) else ''
+                                in_phone = st.text_input("전화번호", value=phone, key=f"p_int_{vendor}")
+                                if not is_sent and st.button(f"🚀 전송", key=f"b_int_{vendor}", type="primary"):
+                                    if not st.session_state.api_key: st.error("API Key 필요")
+                                    else:
+                                        final_msg = st.session_state.get(f"m_int_{vendor}", default_msg)
+                                        ok, _ = send_coolsms_direct(st.session_state.api_key, st.session_state.api_secret, st.session_state.sender_number, clean_phone_number(in_phone), final_msg)
+                                        if ok:
+                                            st.session_state.sent_history.add(vendor)
+                                            st.rerun()
+                            with c2:
+                                # 높이를 좀 더 키워서 입력하기 편하게
+                                st.text_area("발주 내용 입력", value=default_msg, height=200, key=f"m_int_{vendor}", placeholder="예) 사과 10박스, 대파 20단")
 
-            with tab1: render_order_tab(["일반업체", "일반업체(강제)"], "ext")
-            with tab2: render_order_tab(["지족(사입)"], "int")
             
         else: st.error("엑셀 형식을 확인해주세요.")
     else: st.info("판매 데이터를 업로드해주세요.")
