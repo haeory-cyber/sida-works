@@ -126,7 +126,7 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 18.3 (심플모드)") # 버전 확인용
+    st.caption("Ver 18.4 (사입 근거 표시)") # 버전 확인용
     st.divider()
     
     password = st.text_input("비밀번호", type="password")
@@ -222,18 +222,16 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             agg_item['추정매입가'] = agg_item['평균판매가'] * purchase_rate
             agg_item['발주량'] = np.ceil(agg_item['판매량'] * safety)
             
-            tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 (심플 모드)"])
+            tab1, tab2 = st.tabs(["🏢 외부업체 건별 발주", "🏪 지족 사입 (직접 발주)"])
             
-            # --- [탭 1] 일반 업체 (기존 로직: 상품별 나열) ---
+            # --- [탭 1] 일반 업체 ---
             with tab1:
                 df_ext = agg_item[agg_item['구분'].isin(["일반업체", "일반업체(강제)"])].copy()
-                if df_ext.empty:
-                    st.info("데이터 없음")
+                if df_ext.empty: st.info("데이터 없음")
                 else:
                     search = st.text_input(f"🔍 업체명 검색", key=f"s_ext")
                     all_v = sorted(df_ext['업체명'].unique())
                     targets = [v for v in all_v if search in v] if search else all_v
-
                     for vendor in targets:
                         is_sent = vendor in st.session_state.sent_history
                         v_data = df_ext[df_ext['업체명'] == vendor]
@@ -241,9 +239,8 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                         for _, r in v_data.iterrows(): msg_lines.append(f"- {r['상품명']}: {int(r['발주량'])}")
                         msg_lines.append("잘 부탁드립니다!")
                         default_msg = "\n".join(msg_lines)
-                        
                         icon = "✅" if is_sent else "📩"
-                        with st.expander(f"{icon} {vendor} ({len(v_data)}품목)", expanded=not is_sent):
+                        with st.expander(f"{icon} {vendor}", expanded=not is_sent):
                             c1, c2 = st.columns([1, 2])
                             with c1:
                                 phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
@@ -255,33 +252,39 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                         if ok:
                                             st.session_state.sent_history.add(vendor)
                                             st.rerun()
-                            with c2:
-                                st.text_area("내용", value=default_msg, height=150, key=f"m_ext_{vendor}")
+                            with c2: st.text_area("내용", value=default_msg, height=150, key=f"m_ext_{vendor}")
 
-            # --- [탭 2] 지족 사입 (심플 모드: 매출만 보여주고, 내용은 빈칸) ---
+            # --- [탭 2] 지족 사입 (근거 + 입력) ---
             with tab2:
                 df_int = agg_item[agg_item['구분'] == "지족(사입)"].copy()
                 if df_int.empty:
                     st.info("지족 사입 데이터가 없습니다.")
                 else:
-                    # 상품별 나열 대신, 업체별 총 매출만 집계
-                    df_summary = df_int.groupby(['업체명', '전화번호'])['총판매액'].sum().reset_index()
-                    st.markdown("ℹ️ **안내:** 사입처는 판매 품목을 나열하지 않고, **매출 요약**만 보여드립니다. 발주 내용은 직접 작성해주세요.")
-                    
-                    for _, row in df_summary.iterrows():
-                        vendor = row['업체명']
+                    vendors = sorted(df_int['업체명'].unique())
+                    for vendor in vendors:
                         is_sent = vendor in st.session_state.sent_history
-                        total_sales = row['총판매액']
-                        
-                        # 심플한 템플릿
-                        default_msg = f"안녕하세요 {vendor}입니다.\n\n[발주 요청]\n\n잘 부탁드립니다."
+                        v_data = df_int[df_int['업체명'] == vendor]
+                        total_sales = v_data['총판매액'].sum()
                         
                         icon = "✅" if is_sent else "🚚"
-                        # 헤더에 총 매출액 표시 (참고용)
-                        with st.expander(f"{icon} {vendor} (오늘 매출: {total_sales:,.0f}원)", expanded=not is_sent):
+                        with st.expander(f"{icon} {vendor} (매출: {total_sales:,.0f}원)", expanded=not is_sent):
+                            
+                            # 1. [근거] 판매 내역 표로 보여주기
+                            st.markdown("##### 📊 어제 판매 실적 (참고용)")
+                            # 보기 좋게 컬럼 정리
+                            display_df = v_data[['상품명', '판매량', '총판매액']].copy()
+                            display_df['판매량'] = display_df['판매량'].astype(int)
+                            display_df['총판매액'] = display_df['총판매액'].apply(lambda x: f"{x:,.0f}")
+                            st.dataframe(display_df, hide_index=True, use_container_width=True)
+                            
+                            # 2. [입력] 문자 전송
+                            st.markdown("##### 📝 발주 문자 작성")
                             c1, c2 = st.columns([1, 2])
+                            
+                            default_msg = f"안녕하세요 {vendor}입니다.\n\n[발주 요청]\n\n잘 부탁드립니다."
+                            
                             with c1:
-                                phone = str(row['전화번호']) if not pd.isna(row['전화번호']) else ''
+                                phone = str(v_data['전화번호'].iloc[0]) if not pd.isna(v_data['전화번호'].iloc[0]) else ''
                                 in_phone = st.text_input("전화번호", value=phone, key=f"p_int_{vendor}")
                                 if not is_sent and st.button(f"🚀 전송", key=f"b_int_{vendor}", type="primary"):
                                     if not st.session_state.api_key: st.error("API Key 필요")
@@ -292,10 +295,8 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                             st.session_state.sent_history.add(vendor)
                                             st.rerun()
                             with c2:
-                                # 높이를 좀 더 키워서 입력하기 편하게
-                                st.text_area("발주 내용 입력", value=default_msg, height=200, key=f"m_int_{vendor}", placeholder="예) 사과 10박스, 대파 20단")
+                                st.text_area("내용", value=default_msg, height=200, key=f"m_int_{vendor}", placeholder="예) 사과 10박스, 대파 20단")
 
-            
         else: st.error("엑셀 형식을 확인해주세요.")
     else: st.info("판매 데이터를 업로드해주세요.")
 
