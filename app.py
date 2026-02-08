@@ -10,7 +10,7 @@ import uuid
 import datetime
 import requests
 import numpy as np
-import plotly.express as px  # [추가] 차트 그리기용 라이브러리
+import plotly.express as px  # 차트 그리기용 라이브러리
 
 # ==========================================
 # [설정] 서버 파일 경로
@@ -184,9 +184,22 @@ if menu == "📦 품앗이 오더 (자동 발주)":
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
         
         if s_item and s_qty and s_amt:
+            # -----------------------------------------------------------
+            # [긴급 처방] 거래처명 통합 전, 물품명에 꼬리표 달기
+            # -----------------------------------------------------------
+            if s_farmer and s_item:
+                def tag_bulk_item(row):
+                    f_name = str(row[s_farmer])
+                    i_name = str(row[s_item])
+                    if '벌크' in f_name and '벌크' not in i_name:
+                        return i_name + "(벌크)"
+                    return i_name
+                df_s[s_item] = df_s.apply(tag_bulk_item, axis=1)
+
             if s_farmer:
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].astype(str).str.replace(' ', '')
+                # 거래처명 통합
                 df_s['clean_farmer'] = df_s['clean_farmer'].str.replace(r'\(?벌크\)?', '', regex=True).str.replace(' ', '')
 
                 def classify(name):
@@ -225,19 +238,23 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             if s_item:
                 def calc_unit_weight(row):
                     w = 0.0
-                    if s_spec and pd.notna(row.get(s_spec)): w = extract_kg(row[s_spec])
-                    if w == 0 and pd.notna(row.get(s_item)): w = extract_kg(row[s_item])
+                    if s_spec and pd.notna(row.get(s_spec)):
+                        w = extract_kg(row[s_spec])
+                    if w == 0 and pd.notna(row.get(s_item)):
+                        w = extract_kg(row[s_item])
                     return w
 
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
 
+                # (1) 화면용 이름 (벌크 유지)
                 def make_display_name(x):
                     s = str(x)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
                     s = s.replace('()', '').strip().replace(' ', '')
                     return s
 
+                # (2) 문자용/부모 이름 (벌크 삭제)
                 def make_parent_name(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
@@ -249,6 +266,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
+            # [집계 1] 화면 표시용
             groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
             agg_disp = df_target.groupby(groupby_disp).agg({
                 s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
@@ -262,10 +280,13 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['판매량'] > 0]
+            
+            # 정렬: 부모 -> 본인
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
             agg_disp['발주_수량'] = np.ceil(agg_disp['판매량'] * safety)
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
+            # [집계 2] 문자용
             agg_sms = agg_disp.groupby(['업체명', '__clean_parent']).agg({
                 '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
             }).reset_index()
@@ -328,7 +349,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                         is_sent = main_vendor in st.session_state.sent_history
                         
                         with st.expander(f"🚚 {main_vendor} (매출: {total_sales:,.0f}원)", expanded=not is_sent):
-                            st.markdown(f"**📦 상세 실적**")
+                            st.markdown(f"**📦 상세 실적 (엑셀 기준)**")
                             d_show = df_main_disp.copy()
                             d_show['발주표시'] = d_show.apply(lambda x: f"{int(x['발주_중량'])}kg" if x['__total_kg'] > 0 else f"{int(x['발주_수량'])}개", axis=1)
                             d_show['총판매액'] = d_show['총판매액'].apply(lambda x: f"{x:,.0f}")
