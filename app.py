@@ -17,6 +17,7 @@ import plotly.express as px
 # ==========================================
 SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 SERVER_MEMBER_FILE = "회원관리(전체).xlsx"
+SERVER_LOYAL_FILE = "품앗이_자동업데이트 - 단골_매칭 (new).csv"
 
 # ==========================================
 # 0. [공통 함수 및 세션]
@@ -438,7 +439,15 @@ elif menu == "📢 이음(마케팅)":
     with tab_m0:
         st.markdown("### ⚡ 생산자 특가 → 단골 즉시 발송")
         st.caption("구글시트 '단골_매칭' → 파일 → CSV 다운로드 후 업로드")
-        up_loyal = st.file_uploader("단골_매칭 CSV / Excel", type=['csv', 'xlsx'], key='loyal_up')
+        # 세션: 세션자동 vs 최신파일
+        df_loyal = None
+        if os.path.exists(SERVER_LOYAL_FILE):
+            try:
+                for enc in ['utf-8-sig','utf-8','cp949','euc-kr']:
+                    try: df_loyal = pd.read_csv(SERVER_LOYAL_FILE, encoding=enc); break
+                    except: continue
+            except: pass
+        up_loyal = st.file_uploader("단골_매칭 CSV (세션자동 업데이트)", type=['csv', 'xlsx'], key='loyal_up')
         if up_loyal:
             try:
                 import io as _io
