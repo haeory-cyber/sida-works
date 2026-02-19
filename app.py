@@ -441,8 +441,27 @@ elif menu == "📢 이음(마케팅)":
         up_loyal = st.file_uploader("단골_매칭 CSV / Excel", type=['csv', 'xlsx'], key='loyal_up')
         if up_loyal:
             try:
-                df_loyal = pd.read_csv(up_loyal, encoding='utf-8-sig') if up_loyal.name.endswith('.csv') else pd.read_excel(up_loyal, engine='openpyxl')
+                import io as _io
+                raw = up_loyal.read()
+                if up_loyal.name.endswith('.csv'):
+                    df_loyal = None
+                    for enc in ['utf-8-sig','utf-8','cp949','euc-kr']:
+                        try:
+                            df_loyal = pd.read_csv(_io.BytesIO(raw), encoding=enc)
+                            break
+                        except: continue
+                else:
+                    df_loyal = pd.read_excel(_io.BytesIO(raw), engine='openpyxl')
+                if df_loyal is None: raise Exception('CSV read failed')
                 df_loyal.columns = [str(c).strip().replace('\ufeff','').replace(' ','') for c in df_loyal.columns]
+                # header auto-detect
+                first_cols = ' '.join(df_loyal.columns.tolist())
+                if '\xeb\x86\x8d\xea\xb0\x80' not in first_cols.encode().decode():
+                    for idx, row in df_loyal.head(10).iterrows():
+                        if any('\xeb\x86\x8d\xea\xb0\x80' in str(v) for v in row):
+                            df_loyal.columns = [str(c).strip().replace(' ','') for c in df_loyal.iloc[idx]]
+                            df_loyal = df_loyal.iloc[idx+1:].reset_index(drop=True)
+                            break
                 c_farmer = next((c for c in df_loyal.columns if '농가' in c), None)
                 c_item   = next((c for c in df_loyal.columns if '품목' in c), None)
                 c_phone  = next((c for c in df_loyal.columns if '연락처' in c or '전화' in c), None)
