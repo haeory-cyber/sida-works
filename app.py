@@ -153,8 +153,8 @@ div.stButton > button {
     font-weight: 700;
     border-radius: 12px;
 }
-/* 전체 여백 줄이기 */
-.block-container { padding-top: 1rem; padding-bottom: 1rem; }
+/* 전체 여백 */
+.block-container { padding-top: 3rem; padding-bottom: 1rem; }
 /* 텍스트 입력 크게 */
 input, textarea { font-size: 1rem !important; }
 /* 탭 크게 */
