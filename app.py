@@ -442,13 +442,13 @@ elif menu == "📢 이음(마케팅)":
         if up_loyal:
             try:
                 df_loyal = pd.read_csv(up_loyal, encoding='utf-8-sig') if up_loyal.name.endswith('.csv') else pd.read_excel(up_loyal, engine='openpyxl')
-                df_loyal.columns = df_loyal.columns.astype(str).str.strip()
+                df_loyal.columns = [str(c).strip().replace('\ufeff','').replace(' ','') for c in df_loyal.columns]
                 c_farmer = next((c for c in df_loyal.columns if '농가' in c), None)
                 c_item   = next((c for c in df_loyal.columns if '품목' in c), None)
                 c_phone  = next((c for c in df_loyal.columns if '연락처' in c or '전화' in c), None)
                 c_cnt    = next((c for c in df_loyal.columns if '횟수' in c or '구매' in c), None)
                 if not c_farmer or not c_phone:
-                    st.error("농가명 / 연락처 컬럼을 찾을 수 없습니다.")
+                    st.error(f"컬럼 감지 실패. 실제 컬럼명: {list(df_loyal.columns)}")
                 else:
                     sel_farmer = st.selectbox("📦 농가 선택", sorted(df_loyal[c_farmer].dropna().unique().tolist()), key='loyal_farmer')
                     df_t = df_loyal[df_loyal[c_farmer] == sel_farmer].copy()
