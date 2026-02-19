@@ -28,16 +28,13 @@ def send_coolsms_direct(api_key, api_secret, sender, receiver, text):
         clean_receiver = re.sub(r'[^0-9]', '', str(receiver))
         clean_sender = re.sub(r'[^0-9]', '', str(sender))
         if not clean_receiver or not clean_sender: return False, {"errorMessage": "번호 오류"}
-
         date = datetime.datetime.now(datetime.timezone.utc).isoformat()
         salt = str(uuid.uuid4())
         data = date + salt
         signature = hmac.new(api_secret.encode('utf-8'), data.encode('utf-8'), hashlib.sha256).hexdigest()
-        
         headers = {"Authorization": f"HMAC-SHA256 apiKey={api_key}, date={date}, salt={salt}, signature={signature}", "Content-Type": "application/json"}
         url = "https://api.coolsms.co.kr/messages/v4/send"
         payload = {"message": {"to": clean_receiver, "from": clean_sender, "text": text}}
-        
         res = requests.post(url, json=payload, headers=headers)
         if res.status_code == 200: return True, res.json()
         else: return False, res.json()
@@ -47,28 +44,21 @@ def send_and_log(sender_name, receiver_phone, msg_text):
     if not st.session_state.api_key:
         st.error("API Key가 없습니다.")
         return False
-    
     ok, res = send_coolsms_direct(
-        st.session_state.api_key, 
-        st.session_state.api_secret, 
-        st.session_state.sender_number, 
-        receiver_phone, 
-        msg_text
+        st.session_state.api_key, st.session_state.api_secret,
+        st.session_state.sender_number, receiver_phone, msg_text
     )
-    
     now_str = datetime.datetime.now().strftime("%H:%M:%S")
     status = "✅ 성공" if ok else "❌ 실패"
     note = "" if ok else res.get("errorMessage", str(res))
-    
-    log_entry = {"시간": now_str, "수신자": sender_name, "번호": receiver_phone, "결과": status, "비고": note}
-    st.session_state.sms_history.insert(0, log_entry)
+    st.session_state.sms_history.insert(0, {"시간": now_str, "수신자": sender_name, "번호": receiver_phone, "결과": status, "비고": note})
     return ok
 
 def clean_phone_number(phone):
     if pd.isna(phone) or str(phone).strip() in ['-', '', 'nan']: return ''
     clean_num = re.sub(r'[^0-9]', '', str(phone))
     if clean_num.startswith('10') and len(clean_num) >= 10: clean_num = '0' + clean_num
-    return clean_num 
+    return clean_num
 
 @st.cache_data
 def load_data_smart(file_obj, type='sales'):
@@ -80,18 +70,13 @@ def load_data_smart(file_obj, type='sales'):
             if hasattr(file_obj, 'seek'): file_obj.seek(0)
             df_raw = pd.read_csv(file_obj, header=None, encoding='utf-8')
         except: return None, "읽기 실패"
-
     target_row_idx = -1
     keywords = ['농가', '공급자', '생산자', '상품', '품목'] if type == 'sales' else \
                ['회원번호', '이름', '휴대전화'] if type == 'member' else ['농가명', '휴대전화', '전화번호']
-    
     for idx, row in df_raw.head(20).iterrows():
         row_str = row.astype(str).str.cat(sep=' ')
-        match_cnt = sum(1 for k in keywords if k in row_str)
-        if match_cnt >= 2:
-            target_row_idx = idx
-            break
-            
+        if sum(1 for k in keywords if k in row_str) >= 2:
+            target_row_idx = idx; break
     if target_row_idx != -1:
         df_final = df_raw.iloc[target_row_idx+1:].copy()
         df_final.columns = df_raw.iloc[target_row_idx]
@@ -113,21 +98,15 @@ def to_clean_number(x):
 def detect_columns(df_columns):
     s_item = next((c for c in df_columns if any(x in c for x in ['상품', '품목'])), None)
     s_qty = next((c for c in df_columns if any(x in c for x in ['판매수량', '수량', '개수'])), None)
-    
     exclude = ['할인', '반품', '취소', '면세', '과세', '부가세']
     candidates = [c for c in df_columns if ('총' in c and ('판매' in c or '매출' in c))] + \
                  [c for c in df_columns if (('판매' in c or '매출' in c) and ('액' in c or '금액' in c))] + \
                  [c for c in df_columns if '금액' in c]
-    
     s_amt = next((c for c in candidates if not any(bad in c for bad in exclude)), None)
     s_farmer = next((c for c in df_columns if any(x in c for x in ['공급자', '농가', '생산자', '거래처'])), None)
     s_spec = next((c for c in df_columns if any(x in c for x in ['규격', '단위', '중량', '용량'])), None)
-    
     return s_item, s_qty, s_amt, s_farmer, s_spec
 
-# ==========================================
-# 2. [일반 발주 업체] (화이트리스트)
-# ==========================================
 VALID_SUPPLIERS = [
     "(주)가보트레이딩", "(주)열두달", "(주)우리밀", "(주)윈윈농수산", "(주)유기샘",
     "(주)케이푸드", "(주)한누리", "G1상사", "mk코리아", "가가호영어조합법인",
@@ -152,25 +131,21 @@ if 'sender_number' not in st.session_state: st.session_state.sender_number = ''
 
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
-    st.caption("Ver 21.20 (버그픽스)") 
+    st.caption("Ver 22.0")
     st.divider()
-    
     password = st.text_input("비밀번호", type="password")
     if password != "poom0118**":
         st.warning("비밀번호를 입력하세요.")
         st.stop()
     st.success("인증 완료")
-    
     st.divider()
     st.session_state.api_key = st.text_input("API Key", value=st.session_state.api_key, type="password")
     st.session_state.api_secret = st.text_input("API Secret", value=st.session_state.api_secret, type="password")
     st.session_state.sender_number = st.text_input("발신번호 (숫자만)", value=st.session_state.sender_number)
-
     st.divider()
     with st.expander("📋 문자 전송 이력", expanded=True):
         if st.session_state.sms_history:
-            log_df = pd.DataFrame(st.session_state.sms_history)
-            st.dataframe(log_df, hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(st.session_state.sms_history), hide_index=True, use_container_width=True)
             if st.button("이력 초기화"):
                 st.session_state.sms_history = []
                 st.rerun()
@@ -180,6 +155,9 @@ with st.sidebar:
 st.title("🤖 시다 워크 (Sida Works)")
 menu = st.radio("", ["📦 품앗이 오더 (자동 발주)", "♻️ 제로웨이스트 (분석)", "📢 품앗이 이음 (마케팅)"], horizontal=True)
 
+# ==========================================
+# 📦 발주 탭
+# ==========================================
 if menu == "📦 품앗이 오더 (자동 발주)":
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
@@ -190,7 +168,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
 
     with st.expander("📂 **[파일 열기] 판매 실적 업로드**", expanded=True):
         up_sales_list = st.file_uploader("판매 실적 파일", type=['xlsx', 'csv'], accept_multiple_files=True, key='ord_up')
-    
+
     df_phone_map = pd.DataFrame()
     if os.path.exists(SERVER_CONTACT_FILE):
         try:
@@ -215,9 +193,7 @@ if menu == "📦 품앗이 오더 (자동 발주)":
     if df_s is not None:
         st.divider()
         s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_s.columns.tolist())
-        
         if s_item and s_qty and s_amt:
-            # 1. 거래처 통합
             def normalize_vendor(name):
                 n = str(name).replace(' ', '')
                 if '지족' in n and '야채' in n: return '지족점야채'
@@ -232,17 +208,14 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 valid_set = {v.replace(' ', '') for v in VALID_SUPPLIERS}
                 df_s['clean_farmer'] = df_s[s_farmer].apply(normalize_vendor)
                 df_s[s_farmer] = df_s['clean_farmer']
-
                 def classify(name):
                     clean = name.replace(' ', '')
                     if "지족(Y)" in name or "지족(y)" in name: return "제외"
-                    if "지족" in clean or "지족" in name: return "지족(사입)" 
-                    elif clean in valid_set: return "일반업체" 
+                    if "지족" in clean: return "지족(사입)"
+                    elif clean in valid_set: return "일반업체"
                     else: return "제외" if not show_all_data else "일반업체(강제)"
-                
                 df_s['구분'] = df_s['clean_farmer'].apply(classify)
                 df_target = df_s[df_s['구분'] != "제외"].copy()
-                
                 if not df_phone_map.empty:
                     df_target = pd.merge(df_target, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
                     df_target.rename(columns={'clean_phone': '전화번호'}, inplace=True)
@@ -251,20 +224,19 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_target = df_s.copy()
                 df_target['구분'] = "일반업체"
 
-            # 2. 숫자 변환 및 수량 0 보정
             df_target[s_qty] = df_target[s_qty].apply(to_clean_number)
             df_target[s_amt] = df_target[s_amt].apply(to_clean_number)
             df_target.loc[(df_target[s_qty] <= 0) & (df_target[s_amt] > 0), s_qty] = 1
 
             def extract_kg(text):
                 text = str(text).lower().replace(' ', '')
-                kg_match = re.search(r'([\d\.]+)(kg)', text)
-                if kg_match:
-                    try: return float(kg_match.group(1))
+                m = re.search(r'([\d\.]+)(kg)', text)
+                if m:
+                    try: return float(m.group(1))
                     except: pass
-                g_match = re.search(r'([\d\.]+)(g)', text)
-                if g_match:
-                    try: return float(g_match.group(1)) / 1000.0
+                m = re.search(r'([\d\.]+)(g)', text)
+                if m:
+                    try: return float(m.group(1)) / 1000.0
                     except: pass
                 return 0.0
 
@@ -274,40 +246,28 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                     if s_spec and pd.notna(row.get(s_spec)): w = extract_kg(row[s_spec])
                     if w == 0 and pd.notna(row.get(s_item)): w = extract_kg(row[s_item])
                     return w
-
                 df_target['__unit_kg'] = df_target.apply(calc_unit_weight, axis=1)
                 df_target['__total_kg'] = df_target['__unit_kg'] * df_target[s_qty]
-
                 def make_display_name(x):
-                    s = str(x)
-                    s = s.replace('*', '') 
+                    s = str(x).replace('*', '')
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
-                    s = s.replace('()', '').strip().replace(' ', '')
-                    return s
-
+                    return s.replace('()', '').strip().replace(' ', '')
                 def make_parent_name(x):
-                    s = str(x)
-                    s = s.replace('*', '') 
+                    s = str(x).replace('*', '')
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
                     s = re.sub(r'\(\s*[\d\.]+\s*(?:g|kg|G|KG)\s*\)', '', s)
-                    s = s.replace('()', '').strip().replace(' ', '')
-                    return s
-
+                    return s.replace('()', '').strip().replace(' ', '')
                 df_target['__display_name'] = df_target[s_item].apply(make_display_name)
                 df_target['__clean_parent'] = df_target[s_item].apply(make_parent_name)
 
-            groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent'] 
-            agg_disp = df_target.groupby(groupby_disp).agg({
-                s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'
-            }).reset_index()
-
+            groupby_disp = [s_farmer, '__display_name', '구분', '__clean_parent']
+            agg_disp = df_target.groupby(groupby_disp).agg({s_qty: 'sum', s_amt: 'sum', '__total_kg': 'sum'}).reset_index()
             if not df_phone_map.empty and s_farmer:
                 agg_disp['clean_farmer'] = agg_disp[s_farmer].astype(str).str.replace(' ', '')
                 agg_disp = pd.merge(agg_disp, df_phone_map, left_on='clean_farmer', right_on='clean_name', how='left')
                 agg_disp.rename(columns={'clean_phone': '전화번호'}, inplace=True)
             else: agg_disp['전화번호'] = ''
-            
             agg_disp.rename(columns={s_farmer: '업체명', '__display_name': '상품명', s_qty: '판매량', s_amt: '총판매액'}, inplace=True)
             agg_disp = agg_disp[agg_disp['총판매액'] > 0]
             agg_disp = agg_disp.sort_values(by=['업체명', '__clean_parent', '상품명'])
@@ -315,16 +275,12 @@ if menu == "📦 품앗이 오더 (자동 발주)":
             agg_disp['발주_중량'] = np.ceil(agg_disp['__total_kg'] * safety)
 
             tab1, tab2 = st.tabs(["🏢 외부업체", "🏪 지족 사입"])
-            
+
             def generate_sms_text(df_source):
-                grouped = df_source.groupby('__clean_parent').agg({
-                    '발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'
-                }).reset_index()
+                grouped = df_source.groupby('__clean_parent').agg({'발주_수량': 'sum', '발주_중량': 'sum', '__total_kg': 'sum'}).reset_index()
                 lines = []
                 for _, row in grouped.iterrows():
-                    qty_str = ""
-                    if row['__total_kg'] > 0: qty_str = f"{int(row['발주_중량'])}kg"
-                    else: qty_str = f"{int(row['발주_수량'])}개"
+                    qty_str = f"{int(row['발주_중량'])}kg" if row['__total_kg'] > 0 else f"{int(row['발주_수량'])}개"
                     lines.append(f"- {row['__clean_parent']}: {qty_str}")
                 return lines
 
@@ -332,18 +288,14 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_ext = agg_disp[agg_disp['구분'].isin(["일반업체", "일반업체(강제)"])].copy()
                 if df_ext.empty: st.info("데이터 없음")
                 else:
-                    search = st.text_input(f"🔍 업체명 검색", key=f"s_ext")
+                    search = st.text_input("🔍 업체명 검색", key="s_ext")
                     all_v = sorted(df_ext['업체명'].unique())
                     targets = [v for v in all_v if search in v] if search else all_v
-                    
                     for vendor in targets:
                         is_sent = vendor in st.session_state.sent_history
                         v_data_disp = df_ext[df_ext['업체명'] == vendor]
-                        msg_lines = [f"[{vendor} 발주]"]
-                        msg_lines.extend(generate_sms_text(v_data_disp))
-                        msg_lines.append("잘 부탁드립니다!")
+                        msg_lines = [f"[{vendor} 발주]"] + generate_sms_text(v_data_disp) + ["잘 부탁드립니다!"]
                         default_msg = "\n".join(msg_lines)
-                        
                         with st.expander(f"📩 {vendor}", expanded=not is_sent):
                             st.dataframe(v_data_disp[['상품명', '판매량', '총판매액']], hide_index=True, use_container_width=True)
                             c1, c2 = st.columns([1, 2])
@@ -356,12 +308,10 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                     ok = send_and_log(vendor, clean_phone_number(in_phone), st.session_state.get(f"m_ext_{vendor}", default_msg))
                                     if ok:
                                         st.session_state.sent_history.add(vendor)
-                                        st.success("✅ 발송이 성공하였습니다") 
-                                        time.sleep(1.5)
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ 발송 실패")
-                            with c2: 
+                                        st.success("✅ 발송 성공")
+                                        time.sleep(1.5); st.rerun()
+                                    else: st.error("❌ 발송 실패")
+                            with c2:
                                 st.markdown("#### 📝 내용 미리보기")
                                 st.text_area("내용", value=default_msg, height=200, key=f"m_ext_{vendor}", label_visibility="collapsed")
 
@@ -369,29 +319,19 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                 df_int = agg_disp[agg_disp['구분'] == "지족(사입)"].copy()
                 if df_int.empty: st.info("지족 사입 데이터가 없습니다.")
                 else:
-                    target_order = ["지족점야채", "지족점과일", "지족매장", "지족점정육", "지족점_공동구매"]
-                    for main_vendor in target_order:
+                    for main_vendor in ["지족점야채", "지족점과일", "지족매장", "지족점정육", "지족점_공동구매"]:
                         df_main_disp = df_int[df_int['업체명'] == main_vendor]
                         if df_main_disp.empty: continue
-                        
                         total_sales = df_main_disp['총판매액'].sum()
                         is_sent = main_vendor in st.session_state.sent_history
-                        
                         with st.expander(f"🚚 {main_vendor} (매출: {total_sales:,.0f}원)", expanded=not is_sent):
-                            st.markdown(f"**📦 상세 실적 (엑셀 기준)**")
                             d_show = df_main_disp.copy()
                             d_show['발주표시'] = d_show.apply(lambda x: f"{int(x['발주_중량'])}kg" if x['__total_kg'] > 0 else f"{int(x['발주_수량'])}개", axis=1)
                             d_show['총판매액'] = d_show['총판매액'].apply(lambda x: f"{x:,.0f}")
                             st.dataframe(d_show[['상품명', '발주표시', '총판매액']], hide_index=True, use_container_width=True)
-                            
                             st.markdown("---")
-                            
-                            auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"]
-                            auto_msg_lines.extend(generate_sms_text(df_main_disp))
-                            auto_msg_lines.append("")
-                            auto_msg_lines.append("잘 부탁드립니다.")
+                            auto_msg_lines = [f"안녕하세요 {main_vendor}입니다.", "", "[발주 요청]"] + generate_sms_text(df_main_disp) + ["", "잘 부탁드립니다."]
                             default_msg = "\n".join(auto_msg_lines)
-
                             c1, c2 = st.columns([1, 2])
                             with c1:
                                 st.markdown("#### 📞 수신 번호")
@@ -399,145 +339,208 @@ if menu == "📦 품앗이 오더 (자동 발주)":
                                 in_phone = st.text_input("전화번호", value=ph, key=f"p_v10_{main_vendor}", label_visibility="collapsed")
                                 st.write("")
                                 if st.button(f"🚀 {main_vendor} 발송", key=f"b_v10_{main_vendor}", type="primary", use_container_width=True):
-                                    # [수정] 변수 오류 해결: final_msg -> 실제 메시지 내용 가져오기
-                                    msg_to_send = st.session_state.get(f"m_v10_{main_vendor}", default_msg)
-                                    ok = send_and_log(main_vendor, clean_phone_number(in_phone), msg_to_send)
+                                    ok = send_and_log(main_vendor, clean_phone_number(in_phone), st.session_state.get(f"m_v10_{main_vendor}", default_msg))
                                     if ok:
                                         st.session_state.sent_history.add(main_vendor)
-                                        st.success("✅ 발송이 성공하였습니다") 
-                                        time.sleep(1.5)
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ 발송 실패")
-                            with c2: 
+                                        st.success("✅ 발송 성공")
+                                        time.sleep(1.5); st.rerun()
+                                    else: st.error("❌ 발송 실패")
+                            with c2:
                                 st.markdown("#### 📝 내용 미리보기")
                                 st.text_area("내용", value=default_msg, height=400, key=f"m_v10_{main_vendor}", label_visibility="collapsed")
 
+# ==========================================
+# ♻️ 제로웨이스트 탭
+# ==========================================
 elif menu == "♻️ 제로웨이스트 (분석)":
-    # (제로웨이스트 탭 유지)
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
-    st.info("💡 **[현장 중심 로직]** 라벨에 '벌크'가 찍힌 상품(무포장)과 그렇지 않은 상품(소포장)을 자동으로 구분합니다.")
-    
-    with st.expander("📂 판매 데이터 업로드 (발주탭과 동일 파일)", expanded=True):
+    st.info("💡 라벨에 '벌크'가 찍힌 상품(무포장)과 그렇지 않은 상품(소포장)을 자동으로 구분합니다.")
+    with st.expander("📂 판매 데이터 업로드", expanded=True):
         up_zw_list = st.file_uploader("판매 실적 파일", type=['xlsx', 'csv'], accept_multiple_files=True, key='zw_up')
-
     if up_zw_list:
         df_list = []
         for file_obj in up_zw_list:
             d, _ = load_data_smart(file_obj, 'sales')
             if d is not None: df_list.append(d)
-        
         if df_list:
             df_zw = pd.concat(df_list, ignore_index=True)
             s_item, s_qty, s_amt, s_farmer, s_spec = detect_columns(df_zw.columns.tolist())
-            
             if s_item and s_amt:
                 def get_parent_zw(x):
                     s = str(x)
                     s = re.sub(r'\(?벌크\)?', '', s)
                     s = re.sub(r'\(?bulk\)?', '', s, flags=re.IGNORECASE)
-                    s = re.sub(r'\(.*?\)', '', s) 
-                    s = s.replace('*', '')  
-                    s = s.replace('()', '').strip().replace(' ', '')
-                    return s
-                
+                    s = re.sub(r'\(.*?\)', '', s)
+                    return s.replace('*', '').replace('()', '').strip().replace(' ', '')
                 df_zw['__parent'] = df_zw[s_item].apply(get_parent_zw)
                 df_zw[s_amt] = df_zw[s_amt].apply(to_clean_number)
-                
                 def get_type_tag(row):
                     i_name = str(row[s_item])
                     f_name = str(row[s_farmer]) if s_farmer and pd.notna(row[s_farmer]) else ""
                     if '벌크' in i_name or 'bulk' in i_name.lower(): return '벌크(무포장)'
                     if '벌크' in f_name: return '벌크(무포장)'
                     return '일반(포장)'
-                
                 df_zw['__type'] = df_zw.apply(get_type_tag, axis=1)
-                
                 grp = df_zw.groupby(['__parent', '__type'])[s_amt].sum().reset_index()
-                
                 parents_with_bulk = grp[grp['__type'] == '벌크(무포장)']['__parent'].unique()
                 target_df = grp[grp['__parent'].isin(parents_with_bulk)].copy()
-                
                 st.divider()
                 if len(parents_with_bulk) == 0:
                     st.info("현재 '벌크(무포장)'로 분류된 데이터가 없습니다.")
                 else:
                     st.markdown(f"**총 {len(parents_with_bulk)}개 품목에서 벌크 판매 비교**")
-                    unique_parents = sorted(target_df['__parent'].unique())
                     cols = st.columns(2)
-                    for i, parent in enumerate(unique_parents):
+                    for i, parent in enumerate(sorted(target_df['__parent'].unique())):
                         subset = target_df[target_df['__parent'] == parent]
-                        fig = px.pie(subset, values=s_amt, names='__type', 
-                                     title=f"<b>{parent}</b>",
-                                     hole=0.4, 
-                                     color='__type',
-                                     color_discrete_map={'벌크(무포장)': '#28a745', '일반(포장)': '#dc3545'}) 
+                        fig = px.pie(subset, values=s_amt, names='__type', title=f"<b>{parent}</b>", hole=0.4,
+                                     color='__type', color_discrete_map={'벌크(무포장)': '#28a745', '일반(포장)': '#dc3545'})
                         fig.update_layout(showlegend=True, height=300, margin=dict(t=40, b=0, l=0, r=0))
-                        with cols[i % 2]:
-                            st.plotly_chart(fig, use_container_width=True)
+                        with cols[i % 2]: st.plotly_chart(fig, use_container_width=True)
             else:
                 st.error("데이터 형식을 확인할 수 없습니다.")
 
+# ==========================================
+# 📢 마케팅 탭
+# ==========================================
 elif menu == "📢 품앗이 이음 (마케팅)":
-    # (마케팅 탭 유지)
-    with st.expander("📂 **[파일 열기] 타겟팅용 판매 데이터 업로드**", expanded=True):
-        up_mkt_sales = st.file_uploader("1. 판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
+    tab_m0, tab_m1, tab_m2 = st.tabs(["⚡ 특가 긴급발송", "🎯 판매 기반 타겟팅", "🔍 회원 직접 검색"])
 
-    df_ms, _ = load_data_smart(up_mkt_sales, 'sales')
-    df_mm = None
-    if os.path.exists(SERVER_MEMBER_FILE):
-        try:
-            with open(SERVER_MEMBER_FILE, "rb") as f: df_mm, _ = load_data_smart(f, 'member')
-        except: pass
+    # ─────────────────────────────────────────
+    # ⚡ 특가 긴급발송
+    # 단골_매칭 CSV → 농가 선택 → 메시지 → 발송
+    # ─────────────────────────────────────────
+    with tab_m0:
+        st.markdown("### ⚡ 생산자 특가 → 단골에게 즉시 발송")
+        st.caption("구글시트 '단골_매칭' 탭 → 파일 → CSV 다운로드 후 업로드")
+        up_loyal = st.file_uploader("단골_매칭 CSV / Excel", type=['csv', 'xlsx'], key='loyal_up')
+        if up_loyal:
+            try:
+                df_loyal = pd.read_csv(up_loyal, encoding='utf-8-sig') if up_loyal.name.endswith('.csv') else pd.read_excel(up_loyal, engine='openpyxl')
+                df_loyal.columns = df_loyal.columns.astype(str).str.strip()
+                c_farmer = next((c for c in df_loyal.columns if '농가' in c), None)
+                c_item   = next((c for c in df_loyal.columns if '품목' in c), None)
+                c_phone  = next((c for c in df_loyal.columns if '연락처' in c or '전화' in c), None)
+                c_cnt    = next((c for c in df_loyal.columns if '횟수' in c or '구매' in c), None)
+                if not c_farmer or not c_phone:
+                    st.error("농가명 / 연락처 컬럼을 찾을 수 없습니다.")
+                else:
+                    sel_farmer = st.selectbox("📦 농가 선택", sorted(df_loyal[c_farmer].dropna().unique().tolist()), key='loyal_farmer')
+                    df_target = df_loyal[df_loyal[c_farmer] == sel_farmer].copy()
+                    df_target['__phone'] = df_target[c_phone].apply(clean_phone_number)
+                    df_valid = df_target[df_target['__phone'] != ''].reset_index(drop=True)
+                    items_str = ', '.join(df_target[c_item].dropna().unique().tolist()) if c_item else ''
+                    col1, col2 = st.columns([1, 2])
+                    with col1:
+                        st.metric("발송 대상", f"{len(df_valid)}명")
+                        if c_cnt:
+                            st.metric("평균 구매횟수", f"{df_target[c_cnt].apply(to_clean_number).mean():.1f}회")
+                    with col2:
+                        if items_str: st.info(f"📋 품목: {items_str}")
+                    st.divider()
+                    default_msg = f"안녕하세요, 품앗이생협입니다 😊\n{sel_farmer}의 {items_str} 특가 안내드립니다!\n\n자세한 내용은 지족점으로 문의 주세요."
+                    msg_input = st.text_area("📝 발송 메시지", value=default_msg, height=150, key='loyal_msg')
+                    st.caption(f"💬 {len(msg_input)}자 {'⚠️ 90자 초과 (장문 요금)' if len(msg_input) > 90 else '✅ 단문'}")
+                    with st.expander("👥 발송 대상 미리보기"):
+                        preview_cols = [c for c in [c_farmer, c_item, c_phone, c_cnt] if c]
+                        st.dataframe(df_valid[preview_cols].head(20), hide_index=True, use_container_width=True)
+                    st.divider()
+                    if st.button(f"🚀 {len(df_valid)}명에게 즉시 발송", type="primary", use_container_width=True, key='loyal_send'):
+                        if not st.session_state.api_key: st.error("사이드바에 API Key를 입력해주세요.")
+                        elif not msg_input.strip(): st.error("메시지를 입력해주세요.")
+                        else:
+                            bar = st.progress(0)
+                            success, fail = 0, 0
+                            for i in range(len(df_valid)):
+                                ok = send_and_log(
+                                    str(df_valid.iloc[i][c_item]) if c_item else sel_farmer,
+                                    df_valid.iloc[i]['__phone'], msg_input
+                                )
+                                if ok: success += 1
+                                else: fail += 1
+                                bar.progress((i + 1) / len(df_valid))
+                                time.sleep(0.3)
+                            st.success(f"✅ 완료!  성공 {success}명 / 실패 {fail}명")
+            except Exception as e:
+                st.error(f"파일 읽기 오류: {e}")
+        else:
+            st.info("💡 구글시트 '단골_매칭' → 파일 → 다운로드 → CSV로 저장 후 업로드")
 
-    tab_m1, tab_m2 = st.tabs(["🎯 판매 기반 타겟팅", "🔍 회원 직접 검색"])
-    final_df = pd.DataFrame()
-    
+    # ─────────────────────────────────────────
+    # 🎯 판매 기반 타겟팅
+    # ─────────────────────────────────────────
     with tab_m1:
+        with st.expander("📂 타겟팅용 판매 데이터 업로드", expanded=True):
+            up_mkt_sales = st.file_uploader("판매내역 (타겟팅)", type=['xlsx', 'csv'], key='mkt_s')
+        df_ms, _ = load_data_smart(up_mkt_sales, 'sales')
+        df_mm = None
+        if os.path.exists(SERVER_MEMBER_FILE):
+            try:
+                with open(SERVER_MEMBER_FILE, "rb") as f: df_mm, _ = load_data_smart(f, 'member')
+            except: pass
+        final_df = pd.DataFrame()
         if df_ms is not None:
             ms_farmer = next((c for c in df_ms.columns if any(x in c for x in ['농가', '공급자'])), None)
-            ms_item = next((c for c in df_ms.columns if any(x in c for x in ['상품', '품목'])), None)
-            ms_buyer = next((c for c in df_ms.columns if any(x in c for x in ['회원', '구매자'])), None)
+            ms_item   = next((c for c in df_ms.columns if any(x in c for x in ['상품', '품목'])), None)
+            ms_buyer  = next((c for c in df_ms.columns if any(x in c for x in ['회원', '구매자'])), None)
             if ms_farmer and ms_buyer:
                 sel_farmer = st.selectbox("농가 선택", sorted(df_ms[ms_farmer].astype(str).unique()))
                 target_df = df_ms[df_ms[ms_farmer] == sel_farmer]
                 if ms_item:
                     sel_item = st.selectbox("상품 선택", ["전체"] + sorted(target_df[ms_item].astype(str).unique()))
                     if sel_item != "전체": target_df = target_df[target_df[ms_item] == sel_item]
-                
                 loyal = target_df.groupby(ms_buyer).size().reset_index(name='구매횟수').sort_values('구매횟수', ascending=False)
                 if df_mm is not None:
-                    mm_name = next((c for c in df_mm.columns if any(x in c for x in ['이름', '회원명'])), None)
+                    mm_name  = next((c for c in df_mm.columns if any(x in c for x in ['이름', '회원명'])), None)
                     mm_phone = next((c for c in df_mm.columns if any(x in c for x in ['휴대전화', '전화'])), None)
                     if mm_name and mm_phone:
                         loyal['key'] = loyal[ms_buyer].astype(str).str.replace(' ', '')
                         df_mm['key'] = df_mm[mm_name].astype(str).str.replace(' ', '')
                         final_df = pd.merge(loyal, df_mm.drop_duplicates(subset=['key']), on='key', how='left')[[ms_buyer, mm_phone, '구매횟수']]
                         final_df.columns = ['이름', '전화번호', '구매횟수']
-    
+        if not final_df.empty:
+            st.divider()
+            st.write(f"수신자: {len(final_df)}명")
+            msg_txt = st.text_area("보낼 내용", key='mkt_msg')
+            if st.button("🚀 전체 발송", type="primary", key='mkt_send'):
+                if not st.session_state.api_key: st.error("API Key 필요")
+                else:
+                    bar = st.progress(0)
+                    for i, r in enumerate(final_df.itertuples()):
+                        send_and_log(r.이름, r.전화번호, msg_txt)
+                        bar.progress((i+1)/len(final_df))
+                    st.success("발송 완료!")
+
+    # ─────────────────────────────────────────
+    # 🔍 회원 직접 검색
+    # ─────────────────────────────────────────
     with tab_m2:
-        if df_mm is not None:
+        df_mm2 = None
+        if os.path.exists(SERVER_MEMBER_FILE):
+            try:
+                with open(SERVER_MEMBER_FILE, "rb") as f: df_mm2, _ = load_data_smart(f, 'member')
+            except: pass
+        if df_mm2 is not None:
             search_k = st.text_input("이름 또는 전화번호 검색")
             if search_k:
-                mm_name = next((c for c in df_mm.columns if any(x in c for x in ['이름', '회원명'])), None)
-                mm_phone = next((c for c in df_mm.columns if any(x in c for x in ['휴대전화', '전화'])), None)
+                mm_name  = next((c for c in df_mm2.columns if any(x in c for x in ['이름', '회원명'])), None)
+                mm_phone = next((c for c in df_mm2.columns if any(x in c for x in ['휴대전화', '전화'])), None)
                 if mm_name and mm_phone:
-                    df_mm['c_name'] = df_mm[mm_name].astype(str).str.replace(' ', '')
-                    df_mm['c_phone'] = df_mm[mm_phone].apply(clean_phone_number)
-                    res = df_mm[df_mm['c_name'].str.contains(search_k) | df_mm['c_phone'].str.contains(search_k)]
+                    df_mm2['c_name']  = df_mm2[mm_name].astype(str).str.replace(' ', '')
+                    df_mm2['c_phone'] = df_mm2[mm_phone].apply(clean_phone_number)
+                    res = df_mm2[df_mm2['c_name'].str.contains(search_k) | df_mm2['c_phone'].str.contains(search_k)]
                     if not res.empty:
-                        final_df = res[[mm_name, mm_phone]].copy()
-                        final_df.columns = ['이름', '전화번호']
-
-    if not final_df.empty:
-        st.divider()
-        st.write(f"수신자: {len(final_df)}명")
-        msg_txt = st.text_area("보낼 내용")
-        if st.button("🚀 전체 발송", type="primary"):
-            if not st.session_state.api_key: st.error("API Key 필요")
-            else:
-                bar = st.progress(0)
-                for i, r in enumerate(final_df.itertuples()):
-                    send_and_log(r.이름, r.전화번호, msg_txt)
-                    bar.progress((i+1)/len(final_df))
-                st.success("발송 완료!")
+                        final_df2 = res[[mm_name, mm_phone]].copy()
+                        final_df2.columns = ['이름', '전화번호']
+                        st.divider()
+                        st.write(f"수신자: {len(final_df2)}명")
+                        msg_txt2 = st.text_area("보낼 내용", key='search_msg')
+                        if st.button("🚀 전체 발송", type="primary", key='search_send'):
+                            if not st.session_state.api_key: st.error("API Key 필요")
+                            else:
+                                bar = st.progress(0)
+                                for i, r in enumerate(final_df2.itertuples()):
+                                    send_and_log(r.이름, r.전화번호, msg_txt2)
+                                    bar.progress((i+1)/len(final_df2))
+                                st.success("발송 완료!")
+        else:
+            st.info("서버에 회원관리 파일이 없습니다.")
