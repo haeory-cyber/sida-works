@@ -752,3 +752,37 @@ elif menu == "📢 이음":
 
     with tab_m1: st.write("판매 기반 타겟팅")
     with tab_m2: st.write("회원 직접 검색")
+import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
+
+def run_google_diagnostics():
+    st.error("🔍 **[시다의 구글 연결 정밀 진단]**")
+    try:
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ 1단계 실패: secrets.toml에 암호키가 없습니다.")
+            return
+        st.success("✅ 1단계 성공: 암호키(JSON) 확인됨")
+
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=scopes)
+        gc = gspread.authorize(creds)
+        st.success("✅ 2단계 성공: 구글 API 로그인(인증) 통과")
+
+        sheet_url = st.secrets.get("REQUEST_SHEET_URL", "")
+        doc = gc.open_by_url(sheet_url)
+        st.success("✅ 3단계 성공: 구글 시트 문서 접근 성공 (공유 권한 정상)")
+
+        sheet = doc.get_worksheet(0)
+        st.success(f"✅ 4단계 성공: 첫 번째 탭 '{sheet.title}' 확인 완료")
+
+    except gspread.exceptions.APIError as e:
+        st.error(f"❌ API 오류: 구글 클라우드에서 Google Sheets/Drive API가 꺼져 있을 수 있습니다. ({e})")
+    except gspread.exceptions.SpreadsheetNotFound:
+        st.error("❌ 공유 오류: 시다 이메일이 시트에 편집자로 초대되지 않았거나 주소가 다릅니다.")
+    except Exception as e:
+        st.error(f"❌ 기타 오류: {e}")
+
+run_google_diagnostics()
+
+
