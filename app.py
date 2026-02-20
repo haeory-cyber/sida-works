@@ -93,7 +93,7 @@ VALID_SUPPLIERS = [
     "토종마을","폴카닷(이은경)","하대목장","한산항아리소곡주","함지박(주)","행복우리식품영농조합"
 ]
 
-st.set_page_config(page_title="시다 워크", page_icon="🤖", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="시다 워크", page_icon="🤖", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
 div.stButton > button { height:3.2rem; font-size:1.1rem; font-weight:700; border-radius:12px; }
 .block-container { padding-top:3rem; padding-bottom:1rem; }
