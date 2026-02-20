@@ -3,3 +3,5 @@ pandas
 openpyxl
 requests
 plotly
+gspread
+oauth2client
