@@ -21,7 +21,6 @@ except ImportError:
 # ══════════════════════════════════════════
 SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 SERVER_MEMBER_FILE  = "회원관리(전체).xlsx"
-APPSHEET_REQUEST_FILE = "발주요청_appsheet.xlsx"
 
 def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
@@ -416,7 +415,6 @@ if menu == "📦 발주":
                     df_t[s_amt] = df_t[s_amt].apply(to_num)
                     df_t.loc[(df_t[s_qty] <= 0) & (df_t[s_amt] > 0), s_qty] = 1
                     
-                    # 과세/비과세 처리
                     if s_vat:
                         df_t[s_vat] = df_t[s_vat].apply(to_num)
                         df_t["과세구분"] = np.where(df_t[s_vat] > 0, "과세", "비과세")
@@ -577,18 +575,24 @@ if menu == "📦 발주":
             df_saip = agg_all[agg_all["구분"] == "지족(사입)"]
             df_balju = agg_all[agg_all["구분"] == "일반업체"]
             
+            # 농가별 과세유형 판별
+            farmer_tax_types = df_balju.groupby("업체명")["과세구분"].unique().apply(
+                lambda x: "혼합(과세+비과세)" if len(x) > 1 else (x[0] + " 전용")
+            ).reset_index(name="농가_과세유형")
+            df_balju = pd.merge(df_balju, farmer_tax_types, on="업체명", how="left")
+            
             sub_tab1, sub_tab2 = st.tabs([f"🌾 농가 발주 대상", f"🛒 지족점 사입"])
             
             with sub_tab1:
-                tax_type = st.radio("과세 구분 선택", ["비과세", "과세"], horizontal=True)
-                df_balju_tax = df_balju[df_balju["과세구분"] == tax_type]
+                tax_type = st.radio("과세 구분 선택", ["비과세 전용", "과세 전용", "혼합(과세+비과세)"], horizontal=True)
+                df_balju_tax = df_balju[df_balju["농가_과세유형"] == tax_type]
                 
                 col_left, col_right = st.columns([1, 2])
                 with col_left:
                     st.markdown('<div class="section-label">농가 선택</div>', unsafe_allow_html=True)
                     farmer_list = df_balju_tax["업체명"].unique().tolist()
                     if not farmer_list:
-                        st.warning(f"{tax_type} 발주 대상 농가가 없습니다.")
+                        st.warning(f"{tax_type} 농가가 없습니다.")
                     else:
                         sel_farmer = st.selectbox("발주할 농가를 선택하세요", farmer_list, label_visibility="collapsed")
                         fd = df_balju_tax[df_balju_tax["업체명"] == sel_farmer]
@@ -605,10 +609,11 @@ if menu == "📦 발주":
                         st.markdown('<div class="section-label">발주 내역 확인 및 수정</div>', unsafe_allow_html=True)
                         
                         def generate_order_text(df_src):
-                            grp = df_src.groupby("__parent").agg({"발주_수량": "sum"}).reset_index()
+                            grp = df_src.groupby(["과세구분", "__parent"]).agg({"발주_수량": "sum"}).reset_index()
                             lines = []
                             for _, r in grp.iterrows():
-                                lines.append(f"- {r['__parent']}: {int(r['발주_수량'])}개")
+                                prefix = f"[{r['과세구분']}] " if tax_type == "혼합(과세+비과세)" else ""
+                                lines.append(f"- {prefix}{r['__parent']}: {int(r['발주_수량'])}개")
                             return lines
 
                         default_msg = "\n".join(
