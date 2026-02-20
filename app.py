@@ -213,9 +213,9 @@ for k, v in [
         st.session_state[k] = v
 
 # ══════════════════════════════════════════
-# 인증
+# 인증 (비밀번호 수정 완료)
 # ══════════════════════════════════════════
-saved_pw = get_secret("APP_PASSWORD", "")
+saved_pw = get_secret("APP_PASSWORD", "poom0118**")
 url_pw = st.query_params.get("pw", "")
 if saved_pw == "poom0118**" or url_pw == "poom0118**":
     st.session_state.auth_passed = True
