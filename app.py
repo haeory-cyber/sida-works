@@ -766,11 +766,12 @@ if menu == "📦 발주":
                         st.markdown('<div class="section-label">발주 내역 확인 및 수정</div>', unsafe_allow_html=True)
                         
                         # 텍스트 박스로 발주 내용 구성 (사용자가 직접 수정 가능하게)
-                        def generate_order_text(df_src):
-                            grp = df_src.groupby("__parent").agg(
-                                {"발주_수량": "sum", "발주_중량": "sum", "__total_kg": "sum"}
-                            ).reset_index()
-                            lines = []
+def generate_order_text(df_src):
+    grp = df_src.groupby("__parent").agg({"발주_수량": "sum"}).reset_index()
+    lines = []
+    for _, r in grp.iterrows():
+        lines.append(f"- {r['__parent']}: {int(r['발주_수량'])}개")
+    return lines = []
                             for _, r in grp.iterrows():
                                 if r["__total_kg"] > 0:
                                     lines.append(f"- {r['__parent']}: {int(r['발주_중량'])}kg")
