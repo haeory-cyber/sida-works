@@ -242,6 +242,7 @@ if not st.session_state.auth_passed:
             elif pw:
                 st.error("비밀번호가 다릅니다.")
     st.stop()
+
 # ══════════════════════════════════════════
 # 페이지 설정 & 스타일
 # ══════════════════════════════════════════
@@ -351,7 +352,7 @@ if menu == "📦 발주":
         
         if gc and sheet_url:
             try:
-                sheet = gc.open_by_url(sheet_url).sheet1
+                sheet = gc.open_by_url(sheet_url).worksheet('현장요청')
                 records = sheet.get_all_records()
                 if records: field_reqs_df = pd.DataFrame(records)
             except Exception as e: pass
@@ -520,45 +521,54 @@ if menu == "📦 발주":
 
         with st.form("field_request_form", clear_on_submit=True):
             fc1, fc2, fc3 = st.columns([3, 2, 2])
-            req_item    = fc1.text_input("품목명 *", placeholder="예: 감자, 두부, 달걀")
-            req_farmer  = fc2.text_input("농가명 (알면)", placeholder="예: 행복농장")
+            req_item    = fc1.text_input("품목명 (필수) *", placeholder="예: 감자, 두부")
+            req_farmer  = fc2.text_input("농가명 (알면 적어주세요)", placeholder="예: 행복농장")
             req_urgent  = fc3.selectbox("긴급도", ["🔴 오늘 필요", "🟡 이번 주", "🟢 여유 있음"])
-            req_note    = st.text_input("메모", placeholder="예: 3번 조합원님 요청, 빠르게 필요")
+            req_note    = st.text_input("메모 (추가 전달사항)", placeholder="예: 3번 조합원님 요청")
             submitted   = st.form_submit_button("➕ 요청 추가", type="primary", use_container_width=True)
 
-            if submitted and req_item:
-                new_row = [req_item, req_farmer or "미지정", req_urgent, req_note, datetime.datetime.now().strftime("%Y-%m-%d %H:%M")]
-                if gc and sheet_url:
-                    try:
-                        sheet = gc.open_by_url(sheet_url).sheet1
-                        if not sheet.get_all_values():
-                            sheet.append_row(["품목명", "농가명", "긴급도", "메모", "입력시간"])
-                        sheet.append_row(new_row)
-                        st.success(f"✅ 구글 시트에 '{req_item}' 요청이 추가되었습니다!")
-                    except Exception as e:
-                        st.error(f"구글 시트 저장 실패: {e}")
+            if submitted:
+                if not req_item:
+                    st.warning("품목명은 꼭 적어주셔야 품앗이님들이 알 수 있습니다.")
                 else:
-                    st.session_state.field_requests.append({
-                        "품목명": new_row[0], "농가명": new_row[1], "긴급도": new_row[2], "메모": new_row[3], "입력시간": new_row[4]
-                    })
-                    st.success(f"✅ 임시 저장소에 '{req_item}' 요청이 추가되었습니다!")
+                    new_row = [
+                        req_item, 
+                        req_farmer if req_farmer else "미지정", 
+                        req_urgent, 
+                        req_note if req_note else "-", 
+                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                    ]
+                    if gc and sheet_url:
+                        try:
+                            sheet = gc.open_by_url(sheet_url).worksheet('현장요청')
+                            if not sheet.get_all_values():
+                                sheet.append_row(["품목명", "농가명", "긴급도", "메모", "입력시간"])
+                            sheet.append_row(new_row)
+                            st.success(f"✅ '{req_item}' 요청이 구글 시트에 기록되었습니다!")
+                        except Exception as e:
+                            st.error(f"시트 연결 오류: '현장요청' 탭이 있는지 확인해 주세요. ({e})")
+                    else:
+                        st.session_state.field_requests.append({
+                            "품목명": new_row[0], "농가명": new_row[1], "긴급도": new_row[2], "메모": new_row[3], "입력시간": new_row[4]
+                        })
+                        st.success(f"✅ 임시 저장소에 '{req_item}' 요청이 추가되었습니다!")
 
         if gc and sheet_url:
             try:
-                sheet = gc.open_by_url(sheet_url).sheet1
+                sheet = gc.open_by_url(sheet_url).worksheet('현장요청')
                 records = sheet.get_all_records()
                 if records:
                     st.markdown('<div class="section-label">구글 시트 누적 요청 목록</div>', unsafe_allow_html=True)
                     req_df = pd.DataFrame(records)
                     st.dataframe(req_df, hide_index=True, use_container_width=True)
-                    if st.button("🗑 전체 시트 초기화", use_container_width=True):
+                    if st.button("🗑 현장요청 시트 비우기", use_container_width=True):
                         sheet.clear()
                         sheet.append_row(["품목명", "농가명", "긴급도", "메모", "입력시간"])
                         st.rerun()
                 else:
                     st.info("현재 구글 시트에 누적된 요청이 없습니다.")
             except Exception as e:
-                st.error(f"시트 데이터를 불러오지 못했습니다: {e}")
+                pass
         else:
             if st.session_state.field_requests:
                 st.markdown('<div class="section-label">현재 요청 목록 (임시)</div>', unsafe_allow_html=True)
@@ -575,7 +585,6 @@ if menu == "📦 발주":
             df_saip = agg_all[agg_all["구분"] == "지족(사입)"]
             df_balju = agg_all[agg_all["구분"] == "일반업체"]
             
-            # 농가별 과세유형 판별
             farmer_tax_types = df_balju.groupby("업체명")["과세구분"].unique().apply(
                 lambda x: "혼합(과세+비과세)" if len(x) > 1 else (x[0] + " 전용")
             ).reset_index(name="농가_과세유형")
