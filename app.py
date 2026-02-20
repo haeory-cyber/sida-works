@@ -108,12 +108,14 @@ def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
 
-# ── 메인 화면 비밀번호 인증 (메모리 기능 추가) ──
+# ── 메인 화면 비밀번호 인증 (자동 로그인 기능 추가) ──
 if "auth_passed" not in st.session_state:
     st.session_state.auth_passed = False
 
 saved_pw = get_secret("APP_PASSWORD", "")
-if saved_pw == "poom0118**":
+url_pw = st.query_params.get("pw", "")
+
+if saved_pw == "poom0118**" or url_pw == "poom0118**":
     st.session_state.auth_passed = True
 
 if not st.session_state.auth_passed:
