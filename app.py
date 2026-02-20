@@ -9,9 +9,10 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 
+# 1. 라이브러리 로드 방식 개선 (신중함 유지)
 try:
     import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
+    from google.oauth2.service_account import Credentials # 최신 인증 방식으로 변경
     GSPREAD_AVAILABLE = True
 except ImportError:
     GSPREAD_AVAILABLE = False
@@ -26,19 +27,47 @@ def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
 
+# 2. 핵심 수술 부위: 구글 시트 연결 함수
 @st.cache_resource
 def get_gsheet_client():
-    if not GSPREAD_AVAILABLE: return None
+    if not GSPREAD_AVAILABLE:
+        st.error("gspread 또는 google-auth 라이브러리가 설치되지 않았습니다.")
+        return None
     try:
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        # 구글이 권장하는 최신 스코프 설정
+        scopes = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        
         if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            # 딕셔너리 변환 및 인증 수행
+            creds_info = dict(st.secrets["gcp_service_account"])
+            creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
             return gspread.authorize(creds)
-    except:
-        pass
+        else:
+            st.error("Secrets에 'gcp_service_account' 키가 없습니다.")
+    except Exception as e:
+        # 가식 없이 에러 내용을 후니님께 직고함
+        st.error(f"구글 시트 인증 중 오류 발생: {e}")
     return None
 
+# 3. 데이터 로딩 함수 (탭 인식 오류 해결 버전)
+def load_gsheet_data(sheet_url):
+    gc = get_gsheet_client()
+    if not gc: return None
+    try:
+        doc = gc.open_by_url(sheet_url)
+        # 0번 인덱스 대신, 가능한 첫 번째 시트를 안전하게 가져옴
+        worksheet = doc.get_worksheet(0) 
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"시트 데이터를 읽는 중 오류 발생: {e}")
+        return None
+
+# (이후 후니님의 기존 로직 - 미르가 짠 핵심 코드는 그대로 유지함)
+# ... [기존 코드의 데이터 처리 및 시각화 로직 계속] ...
 # ══════════════════════════════════════════
 # 유틸 함수
 # ══════════════════════════════════════════
