@@ -771,7 +771,7 @@ def generate_order_text(df_src):
     lines = []
     for _, r in grp.iterrows():
         lines.append(f"- {r['__parent']}: {int(r['발주_수량'])}개")
-    return lines = []
+    return lines
                             for _, r in grp.iterrows():
                                 if r["__total_kg"] > 0:
                                     lines.append(f"- {r['__parent']}: {int(r['발주_중량'])}kg")
