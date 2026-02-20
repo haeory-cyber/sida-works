@@ -376,7 +376,7 @@ elif menu == "📢 이음(마케팅)":
                 c_date   = next((c for c in df_sp.columns if any(x in c for x in ["일시","날짜","date","Date"])), None)
                 c_farmer = next((c for c in df_sp.columns if any(x in c for x in ["농가","공급자","생산자"])), None)
                 c_item   = next((c for c in df_sp.columns if any(x in c for x in ["상품","품목"])), None)
-                c_member = next((c for c in df_sp.columns if "회원번호" in c or "회원" in c), None)
+                c_member = next((c for c in df_sp.columns if "회원번호" in c), None) or next((c for c in df_sp.columns if c == "회원"), None)
 
                 if not c_date or not c_farmer or not c_member:
                     st.error(f"컬럼 감지 실패. 실제 컬럼: {list(df_sp.columns)}")
