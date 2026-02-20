@@ -4,6 +4,9 @@ import io, os, re, time, hmac, hashlib, uuid, datetime, requests
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # ══════════════════════════════════════════
 # 설정
@@ -33,17 +36,49 @@ def send_sms(api_key, api_secret, sender, receiver, text):
     except Exception as e:
         return False, {"errorMessage": str(e)}
 
-def send_and_log(name, phone, text):
-    if not st.session_state.get("api_key"): st.error("API Key 없음"); return False
-    ok, res = send_sms(
-        st.session_state.api_key, st.session_state.api_secret,
-        st.session_state.sender_number, phone, text
-    )
+def send_email(sender_email, sender_password, receiver_email, subject, body):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        return True, "성공"
+    except Exception as e:
+        return False, str(e)
+
+def send_and_log(name, phone, text, email="", is_email=False):
+    if is_email:
+        if not st.session_state.get("gmail_user") or not st.session_state.get("gmail_pw"):
+            st.error("Gmail 설정이 필요합니다.")
+            return False
+        ok, res = send_email(
+            st.session_state.gmail_user, st.session_state.gmail_pw, email,
+            f"[품앗이소비자생활협동조합] {name} 발주 요청", text
+        )
+        mode_str = "이메일"
+        target_str = email
+    else:
+        if not st.session_state.get("api_key"): 
+            st.error("API Key 없음")
+            return False
+        ok, res = send_sms(
+            st.session_state.api_key, st.session_state.api_secret,
+            st.session_state.sender_number, phone, text
+        )
+        mode_str = "문자"
+        target_str = phone
+
     st.session_state.sms_history.insert(0, {
         "시간": datetime.datetime.now().strftime("%H:%M:%S"),
-        "수신자": name, "번호": phone,
+        "수신자": name, "연락처": target_str,
+        "방식": mode_str,
         "결과": "✅" if ok else "❌",
-        "비고": "" if ok else res.get("errorMessage", "")
+        "비고": "" if ok else (res.get("errorMessage", "") if not is_email else res)
     })
     return ok
 
@@ -149,6 +184,8 @@ for k, v in [
     ("api_key", get_secret("SOLAPI_API_KEY", "")),
     ("api_secret", get_secret("SOLAPI_API_SECRET", "")),
     ("sender_number", get_secret("SENDER_NUMBER", "")),
+    ("gmail_user", get_secret("GMAIL_USER", "")),
+    ("gmail_pw", get_secret("GMAIL_APP_PW", "")),
     ("field_requests", []),   # 현장요청 임시저장
 ]:
     if k not in st.session_state:
@@ -265,6 +302,14 @@ div.stButton > button[kind="primary"]:hover {
     background: #1e4d38;
     transform: translateY(-1px);
 }
+div.stButton > button[kind="secondary"] {
+    background: #f39c12;
+    color: white;
+}
+div.stButton > button[kind="secondary"]:hover {
+    background: #d68910;
+    transform: translateY(-1px);
+}
 
 /* 탭 */
 .stTabs [data-baseweb="tab-list"] {
@@ -333,12 +378,17 @@ with st.sidebar:
     st.markdown("### 🌿 시다 워크")
     st.caption("Ver 2.0 · 품앗이생협")
     st.divider()
-    st.markdown('<div class="section-label">솔라피 설정</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">솔라피 설정 (문자)</div>', unsafe_allow_html=True)
     st.session_state.api_key       = st.text_input("API Key",    value=st.session_state.api_key,       type="password", label_visibility="collapsed", placeholder="API Key")
     st.session_state.api_secret    = st.text_input("Secret",     value=st.session_state.api_secret,    type="password", label_visibility="collapsed", placeholder="API Secret")
     st.session_state.sender_number = st.text_input("발신번호",   value=st.session_state.sender_number, label_visibility="collapsed", placeholder="발신번호 (숫자만)")
     st.divider()
-    with st.expander("📋 문자 전송 이력", expanded=False):
+    st.markdown('<div class="section-label">Gmail 설정 (이메일)</div>', unsafe_allow_html=True)
+    st.session_state.gmail_user = st.text_input("Gmail 계정", value=st.session_state.gmail_user, placeholder="example@gmail.com")
+    st.session_state.gmail_pw   = st.text_input("앱 비밀번호", value=st.session_state.gmail_pw, type="password", placeholder="16자리 앱 비밀번호")
+    st.caption("구글 계정 관리 > 보안 > 2단계 인증 > 앱 비밀번호에서 생성")
+    st.divider()
+    with st.expander("📋 발송 이력", expanded=False):
         if st.session_state.sms_history:
             log_df = pd.DataFrame(st.session_state.sms_history)
             st.dataframe(log_df, hide_index=True, use_container_width=True)
@@ -373,7 +423,7 @@ st.markdown("---")
 # ══════════════════════════════════════════════════════════════════
 if menu == "📦 발주":
 
-    tab_order, tab_field, tab_send = st.tabs(["🧮 발주서 생성", "📍 현장 요청", "📤 발주 발송"])
+    tab_order, tab_field, tab_send = st.tabs(["🧮 판매데이터 분석", "📍 현장 요청", "📤 발주 발송(농가별)"])
 
     # ── 농가 연락처 로드 ──
     df_phone_map = pd.DataFrame()
@@ -387,14 +437,16 @@ if menu == "📦 발주":
                 i_email = next((c for c in df_ci.columns if "이메일" in c or "email" in c.lower()), None)
                 if i_name and i_phone:
                     df_ci["clean_farmer"]  = df_ci[i_name].astype(str).str.replace(" ", "")
+                    df_ci["clean_phone"] = df_ci[i_phone].apply(clean_phone)
+                    df_ci["clean_email"] = df_ci[i_email].astype(str) if i_email else ""
                     df_phone_map = df_ci.drop_duplicates(subset=["clean_farmer"])[
-                    ["clean_farmer", "clean_phone", "clean_email"]
-]
+                        ["clean_farmer", "clean_phone", "clean_email"]
+                    ]
         except:
             pass
 
     # ══════════════════════
-    # 탭1: 발주서 생성
+    # 탭1: 판매데이터 분석
     # ══════════════════════
     with tab_order:
         # ── 유동자금 입력 ──
@@ -403,7 +455,7 @@ if menu == "📦 발주":
         with col_b1:
             budget = st.number_input(
                 "현재 유동자금 (원)",
-                min_value=0, value=st.session_state.get("budget", 3000000),
+                min_value=0, value=st.session_state.get("budget", 30000000),
                 step=100000, format="%d",
                 help="발주 우선순위 산정에 사용됩니다 (판매금액 70% 회전율 기준)"
             )
@@ -414,21 +466,6 @@ if menu == "📦 발주":
             period_map = {"최근 1일": 1, "최근 3일": 3, "최근 7일": 7, "최근 14일": 14}
             sel_period = st.selectbox("집계기간", list(period_map.keys()), index=2)
             period_days = period_map[sel_period]
-
-        # 유동자금 게이지 (임시 — 발주 합계 대비)
-        if budget > 0:
-            est_order_total = st.session_state.get("est_order_total", 0)
-            ratio = min(est_order_total / budget, 1.0) if budget > 0 else 0
-            bar_class = "danger" if ratio > 0.8 else "warn" if ratio > 0.5 else ""
-            pct = int(ratio * 100)
-            st.markdown(f"""
-            <div style="font-size:0.8rem; color:#888; margin-bottom:2px;">
-              예상 발주액: <b>{est_order_total:,.0f}원</b> / 유동자금: <b>{budget:,.0f}원</b> ({pct}% 사용)
-            </div>
-            <div class="budget-bar-wrap">
-              <div class="budget-bar {bar_class}" style="width:{pct}%"></div>
-            </div>
-            """, unsafe_allow_html=True)
 
         st.markdown('<div class="section-label">📂 판매 실적 업로드</div>', unsafe_allow_html=True)
         up_sales = st.file_uploader(
@@ -488,7 +525,7 @@ if menu == "📦 발주":
                             if "지족(Y)" in name or "지족(y)" in name: return "제외"
                             if "지족" in c: return "지족(사입)"
                             elif c in valid_set: return "일반업체"
-                            else: return "제외"
+                            else: return "일반업체" # 기본값을 일반업체(발주대상)로 설정
 
                         df_s["구분"] = df_s["clean_farmer"].apply(classify)
                         df_t = df_s[df_s["구분"] != "제외"].copy()
@@ -543,22 +580,24 @@ if menu == "📦 발주":
                             urgent_items.add(req.get("품목명", "").replace(" ", ""))
 
                     # ── 유동자금 기반 우선순위 ──
-                    # 농가별 예상 발주액 = 총판매액의 70%
                     farmer_est = agg.groupby("업체명")["총판매액"].sum() * 0.7
                     farmer_est_df = farmer_est.reset_index()
-                    farmer_est_df.columns = ["업체명", "예상발주액"]
+                    farmer_est_df.columns = ["업체명", "예상발주액_업체합계"]
                     agg = pd.merge(agg, farmer_est_df, on="업체명", how="left")
+                    
+                    # 각 품목별 예상발주액 계산 (총판매액의 70%)
+                    agg["예상발주액"] = agg["총판매액"] * 0.7
 
                     # 우선순위 점수
                     def calc_priority(row):
-                        score = row["총판매액"] * 0.7  # 기본: 판매금액 70%
+                        score = row["총판매액"] * 0.7  
                         if row["상품명"].replace(" ", "") in urgent_items:
-                            score *= 3  # 긴급요청 3배 가중치
+                            score *= 3  
                         return score
 
                     agg["우선순위점수"] = agg.apply(calc_priority, axis=1)
 
-                    # 누적 예상 발주액 (우선순위 순)
+                    # 누적 예상 발주액 (전체 품목 대상)
                     agg_sorted = agg.sort_values("우선순위점수", ascending=False).copy()
                     agg_sorted["누적발주액"] = agg_sorted["예상발주액"].cumsum()
                     agg_sorted["예산내"] = agg_sorted["누적발주액"] <= budget
@@ -574,10 +613,15 @@ if menu == "📦 발주":
                     # 예상 발주 합계 저장
                     est_total = agg_sorted[agg_sorted["예산내"]]["예상발주액"].sum()
                     st.session_state.est_order_total = est_total
-                    st.session_state.order_df = agg_sorted  # 발송 탭에서 사용
+                    st.session_state.order_df = agg_sorted  
 
                     # ── 결과 표시 ──
-                    st.divider()
+                    st.success("✅ 판매 데이터 분석 완료! '발주 발송(농가별)' 탭에서 농가별로 발주서를 확인하고 전송하세요.")
+                    
+                    # 데이터 분리 안내
+                    num_saip = len(agg_sorted[agg_sorted["구분"] == "지족(사입)"])
+                    num_balju = len(agg_sorted[agg_sorted["구분"] == "일반업체"])
+                    st.info(f"📊 총 {len(agg_sorted)}건 분석: 일반업체(발주) {num_balju}건 / 지족점(사입) {num_saip}건")
 
                     # 요약 메트릭
                     m1, m2, m3, m4 = st.columns(4)
@@ -585,90 +629,32 @@ if menu == "📦 발주":
                     m2.metric("긴급 품목", f"{(agg_sorted['발주상태']=='🔴 긴급').sum()}건")
                     m3.metric("예산 내 품목", f"{agg_sorted['예산내'].sum()}건")
                     m4.metric("예상 발주액", f"{est_total:,.0f}원")
-
-                    # 발주서 필터
-                    show_status = st.multiselect(
-                        "발주 상태 필터",
-                        ["🔴 긴급", "🟢 권장", "⚪ 여유"],
-                        default=["🔴 긴급", "🟢 권장"]
-                    )
-                    filtered = agg_sorted[agg_sorted["발주상태"].isin(show_status)]
-
-                    # 농가별 그룹 표시
-                    for farmer in filtered["업체명"].unique():
-                        fd = filtered[filtered["업체명"] == farmer]
-                        phone = fd["clean_phone"].iloc[0] if "clean_phone" in fd.columns else ""
-                        email = fd["clean_email"].iloc[0] if "clean_email" in fd.columns else ""
-                        farmer_total = fd["총판매액"].sum()
-
-                        with st.expander(
-                            f"🌾 {farmer}  |  {len(fd)}품목  |  {farmer_total:,.0f}원",
-                            expanded=(fd["발주상태"] == "🔴 긴급").any()
-                        ):
-                            show_cols = ["발주상태", "상품명", "판매량", "발주_수량", "발주_중량", "총판매액"]
-                            disp = fd[show_cols].copy()
-                            disp["총판매액"] = disp["총판매액"].apply(lambda x: f"{x:,.0f}")
-                            st.dataframe(disp, hide_index=True, use_container_width=True)
-
-                            # 문자 미리보기
-                            def sms_lines_f(df_src):
-                                grp = df_src.groupby("__parent").agg(
-                                    {"발주_수량": "sum", "발주_중량": "sum", "__total_kg": "sum"}
-                                ).reset_index()
-                                lines = []
-                                for _, r in grp.iterrows():
-                                    if r["__total_kg"] > 0:
-                                        lines.append(f"- {r['__parent']}: {int(r['발주_중량'])}kg")
-                                    else:
-                                        lines.append(f"- {r['__parent']}: {int(r['발주_수량'])}개")
-                                return lines
-
-                            msg = "\n".join(
-                                [f"[품앗이생협 발주 요청]"] +
-                                sms_lines_f(fd) +
-                                ["감사합니다 🙏"]
-                            )
-
-                            c1, c2 = st.columns([1, 2])
-                            with c1:
-                                in_ph = st.text_input("📞", value=phone or "", key=f"ph_{farmer}", label_visibility="collapsed")
-                                in_em = st.text_input("📧", value=email or "", key=f"em_{farmer}", label_visibility="collapsed", placeholder="이메일 (없으면 문자)")
-                                if st.button("🚀 발송", key=f"send_{farmer}", type="primary", use_container_width=True):
-                                    if in_em and "@" in in_em:
-                                        # 이메일 발송
-                                        try:
-                                            st.info(f"이메일 발송: {in_em} (서버 설정 필요)")
-                                        except:
-                                            st.error("이메일 발송 실패")
-                                    elif in_ph:
-                                        ok = send_and_log(farmer, clean_phone(in_ph), st.session_state.get(f"msg_{farmer}", msg))
-                                        if ok:
-                                            st.session_state.sent_history.add(farmer)
-                                            st.success("✅ 발송 완료")
-                                            time.sleep(0.5)
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ 발송 실패")
-                                    else:
-                                        st.warning("연락처를 입력해주세요")
-                            with c2:
-                                st.text_area(
-                                    "발주 내용",
-                                    value=msg, height=160,
-                                    key=f"msg_{farmer}",
-                                    label_visibility="collapsed"
-                                )
-
-                    # 다운로드
-                    dl_cols = ["발주상태", "업체명", "상품명", "판매량", "발주_수량", "발주_중량", "총판매액", "예상발주액"]
+                    
+                    # 유동자금 게이지 
+                    if budget > 0:
+                        ratio = min(est_total / budget, 1.0)
+                        bar_class = "danger" if ratio > 0.8 else "warn" if ratio > 0.5 else ""
+                        pct = int(ratio * 100)
+                        st.markdown(f"""
+                        <div style="font-size:0.8rem; color:#888; margin-bottom:2px;">
+                          예상 발주액: <b>{est_total:,.0f}원</b> / 유동자금: <b>{budget:,.0f}원</b> ({pct}% 사용)
+                        </div>
+                        <div class="budget-bar-wrap">
+                          <div class="budget-bar {bar_class}" style="width:{pct}%"></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                    # 다운로드 
+                    dl_cols = ["발주상태", "구분", "업체명", "상품명", "판매량", "발주_수량", "발주_중량", "총판매액", "예상발주액"]
                     dl_cols = [c for c in dl_cols if c in agg_sorted.columns]
                     st.download_button(
-                        "📥 발주서 전체 다운로드",
+                        "📥 전체 데이터 다운로드 (사입/발주 포함)",
                         data=to_excel(agg_sorted[dl_cols]),
-                        file_name=f"발주서_{datetime.datetime.now().strftime('%m%d')}.xlsx",
+                        file_name=f"분석데이터_{datetime.datetime.now().strftime('%m%d')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
+
                 else:
                     st.error("데이터 컬럼을 인식할 수 없습니다. 파일을 확인해주세요.")
 
@@ -733,41 +719,126 @@ if menu == "📦 발주":
             st.info("아직 현장 요청이 없습니다. 위 양식으로 추가해보세요.")
 
     # ══════════════════════
-    # 탭3: 일괄 발송
+    # 탭3: 발주 발송 (농가별)
     # ══════════════════════
     with tab_send:
         if "order_df" not in st.session_state or st.session_state.order_df is None:
-            st.info("먼저 '발주서 생성' 탭에서 판매데이터를 업로드해주세요.")
+            st.info("먼저 '판매데이터 분석' 탭에서 파일을 업로드해주세요.")
         else:
-            agg_s = st.session_state.order_df
-            urgent_only = st.checkbox("긴급 품목만 발송", value=True)
-            if urgent_only:
-                send_df = agg_s[agg_s["발주상태"] == "🔴 긴급"]
-            else:
-                send_df = agg_s[agg_s["발주상태"].isin(["🔴 긴급", "🟢 권장"])]
-
-            unsent = [f for f in send_df["업체명"].unique() if f not in st.session_state.sent_history]
-            st.metric("미발송 농가", f"{len(unsent)}곳")
-
-            if unsent:
-                if st.button(f"🚀 {len(unsent)}곳 일괄 발송", type="primary", use_container_width=True):
-                    if not st.session_state.api_key:
-                        st.error("사이드바에 API Key를 입력해주세요.")
+            st.markdown("### 📤 발주서 확인 및 전송")
+            st.caption("판매 데이터를 기반으로 생성된 발주 내역을 확인하고 수정한 뒤 발송합니다.")
+            
+            agg_all = st.session_state.order_df
+            
+            # 사입과 발주 분리
+            df_saip = agg_all[agg_all["구분"] == "지족(사입)"]
+            df_balju = agg_all[agg_all["구분"] == "일반업체"]
+            
+            # 상단 탭으로 구분
+            sub_tab1, sub_tab2 = st.tabs([f"🌾 농가 발주 대상 ({len(df_balju['업체명'].unique())}곳)", f"🛒 지족점 사입 ({len(df_saip['업체명'].unique())}분류)"])
+            
+            with sub_tab1:
+                col_left, col_right = st.columns([1, 2])
+                
+                # 왼쪽: 농가 목록
+                with col_left:
+                    st.markdown('<div class="section-label">농가 선택</div>', unsafe_allow_html=True)
+                    farmer_list = df_balju["업체명"].unique().tolist()
+                    
+                    if not farmer_list:
+                        st.warning("발주 대상 농가가 없습니다.")
                     else:
-                        bar = st.progress(0)
-                        for i, farmer in enumerate(unsent):
-                            fd = send_df[send_df["업체명"] == farmer]
-                            phone = fd["clean_phone"].iloc[0] if "clean_phone" in fd.columns else ""
-                            if not phone: continue
-                            items = fd["상품명"].tolist()
-                            msg = f"[품앗이생협 발주]\n" + "\n".join([f"- {it}" for it in items]) + "\n감사합니다 🙏"
-                            ok = send_and_log(farmer, clean_phone(phone), msg)
-                            if ok: st.session_state.sent_history.add(farmer)
-                            bar.progress((i + 1) / len(unsent))
-                            time.sleep(0.3)
-                        st.success("✅ 일괄 발송 완료!")
-            else:
-                st.success("✅ 모든 농가에 발송이 완료되었습니다!")
+                        sel_farmer = st.selectbox("발주할 농가를 선택하세요", farmer_list, label_visibility="collapsed")
+                        
+                        fd = df_balju[df_balju["업체명"] == sel_farmer]
+                        phone = fd["clean_phone"].iloc[0] if "clean_phone" in fd.columns else ""
+                        email = fd["clean_email"].iloc[0] if "clean_email" in fd.columns else ""
+                        farmer_total = fd["총판매액"].sum()
+                        
+                        st.markdown(f"**총 판매액:** {farmer_total:,.0f}원")
+                        st.markdown(f"**품목 수:** {len(fd)}개")
+                        if phone: st.caption(f"📞 {phone}")
+                        if email: st.caption(f"📧 {email}")
+                
+                # 오른쪽: 발주 수정 및 발송
+                with col_right:
+                    if farmer_list and sel_farmer:
+                        st.markdown('<div class="section-label">발주 내역 확인 및 수정</div>', unsafe_allow_html=True)
+                        
+                        # 텍스트 박스로 발주 내용 구성 (사용자가 직접 수정 가능하게)
+                        def generate_order_text(df_src):
+                            grp = df_src.groupby("__parent").agg(
+                                {"발주_수량": "sum", "발주_중량": "sum", "__total_kg": "sum"}
+                            ).reset_index()
+                            lines = []
+                            for _, r in grp.iterrows():
+                                if r["__total_kg"] > 0:
+                                    lines.append(f"- {r['__parent']}: {int(r['발주_중량'])}kg")
+                                else:
+                                    lines.append(f"- {r['__parent']}: {int(r['발주_수량'])}개")
+                            return lines
+
+                        default_msg = "\n".join(
+                            [f"[품앗이소비자생활협동조합 발주 요청]"] +
+                            [f"{sel_farmer} 농가님, 안녕하세요."] +
+                            [f"조합원님들의 사랑으로 판매된 품목의 추가 발주를 요청드립니다.\n"] +
+                            generate_order_text(fd) +
+                            ["\n정직한 땀방울에 항상 감사드립니다. 🙏"]
+                        )
+                        
+                        msg_input = st.text_area(
+                            "발주 문구 및 수량 (자유롭게 수정하세요)",
+                            value=default_msg,
+                            height=250,
+                            key=f"msg_edit_{sel_farmer}"
+                        )
+                        
+                        st.markdown('<div class="section-label">발송 정보 입력</div>', unsafe_allow_html=True)
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            in_ph = st.text_input("받는 사람 번호 📞", value=phone or "", key=f"in_ph_{sel_farmer}")
+                            if st.button("📱 문자(SMS) 발송", key=f"btn_sms_{sel_farmer}", type="primary", use_container_width=True):
+                                if in_ph:
+                                    with st.spinner("문자 발송 중..."):
+                                        ok = send_and_log(sel_farmer, clean_phone(in_ph), msg_input, is_email=False)
+                                        if ok:
+                                            st.session_state.sent_history.add(sel_farmer)
+                                            st.success("✅ 문자 발송 완료")
+                                        else:
+                                            st.error("❌ 문자 발송 실패 (로그 확인)")
+                                else:
+                                    st.warning("전화번호를 입력해주세요.")
+                                    
+                        with c2:
+                            in_em = st.text_input("받는 사람 이메일 📧", value=email or "", key=f"in_em_{sel_farmer}")
+                            if st.button("📧 이메일 발송", key=f"btn_em_{sel_farmer}", type="secondary", use_container_width=True):
+                                if in_em and "@" in in_em:
+                                    with st.spinner("이메일 발송 중..."):
+                                        ok = send_and_log(sel_farmer, "", msg_input, email=in_em, is_email=True)
+                                        if ok:
+                                            st.session_state.sent_history.add(sel_farmer)
+                                            st.success("✅ 이메일 발송 완료")
+                                        else:
+                                            st.error("❌ 이메일 발송 실패 (Gmail 설정 확인)")
+                                else:
+                                    st.warning("올바른 이메일 주소를 입력해주세요.")
+
+            with sub_tab2:
+                st.markdown("### 🛒 지족점 사입 목록")
+                st.caption("이 목록은 농가 발송 대상이 아니며, 내부 사입 참고용입니다.")
+                if df_saip.empty:
+                    st.info("사입 데이터가 없습니다.")
+                else:
+                    show_cols = ["발주상태", "업체명", "상품명", "판매량", "발주_수량", "발주_중량", "총판매액"]
+                    st.dataframe(df_saip[show_cols], hide_index=True, use_container_width=True)
+                    st.download_button(
+                        "📥 사입 목록 다운로드",
+                        data=to_excel(df_saip[show_cols]),
+                        file_name=f"지족점_사입목록_{datetime.datetime.now().strftime('%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
 
 # ══════════════════════════════════════════
 # ♻️ 제로웨이스트
@@ -916,7 +987,7 @@ elif menu == "📢 이음":
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                         st.divider()
-                        default_msg = f"안녕하세요, 품앗이생협입니다 😊\n{sel_farmer}의 {items_str} 특가 안내드립니다!\n\n자세한 내용은 지족점으로 문의 주세요."
+                        default_msg = f"안녕하세요, 품앗이소비자생활협동조합입니다 😊\n품앗이님께서 자주 찾아주시는 {sel_farmer}의 {items_str} 특가 안내드립니다!\n\n자세한 내용은 지족점으로 문의 주세요."
                         msg_input = st.text_area("📝 발송 메시지", value=default_msg, height=150, key="loyal_msg")
                         st.caption(f"💬 {len(msg_input)}자 {'⚠️ 90자 초과 (장문 요금)' if len(msg_input) > 90 else '✅ 단문'}")
 
