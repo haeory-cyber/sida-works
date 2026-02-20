@@ -386,12 +386,10 @@ if menu == "📦 발주":
                 i_phone = next((c for c in df_ci.columns if "휴대전화" in c or "전화" in c), None)
                 i_email = next((c for c in df_ci.columns if "이메일" in c or "email" in c.lower()), None)
                 if i_name and i_phone:
-                    df_ci["clean_name"]  = df_ci[i_name].astype(str).str.replace(" ", "")
-                    df_ci["clean_phone"] = df_ci[i_phone].apply(clean_phone)
-                    df_ci["clean_email"] = df_ci[i_email].astype(str) if i_email else ""
-                    df_phone_map = df_ci.drop_duplicates(subset=["clean_name"])[
-                        ["clean_name", "clean_phone", "clean_email"]
-                    ]
+                    df_ci["clean_farmer"]  = df_ci[i_name].astype(str).str.replace(" ", "")
+                    df_phone_map = df_ci.drop_duplicates(subset=["clean_farmer"])[
+                    ["clean_farmer", "clean_phone", "clean_email"]
+]
         except:
             pass
 
