@@ -409,6 +409,7 @@ elif menu == "📢 이음(마케팅)":
                         mm_id    = next((c for c in df_mem.columns if "회원번호" in c or "아이디" in c), None)
                         mm_phone = next((c for c in df_mem.columns if "휴대전화" in c or "전화" in c), None)
                         mm_name  = next((c for c in df_mem.columns if "이름" in c or "회원명" in c), None)
+                        st.caption(f"🔍 회원DB: {list(df_mem.columns)[:8]} | mm_id={mm_id} | mm_phone={mm_phone} | c_member={c_member}")
                         if mm_id and mm_phone:
                             merged = pd.merge(loyal_counts,
                                               df_mem[[mm_id, mm_phone]+([mm_name] if mm_name else [])],
