@@ -352,7 +352,7 @@ if menu == "📦 발주":
         
         if gc and sheet_url:
             try:
-                sheet = gc.open_by_url(sheet_url).worksheet('현장요청')
+                sheet = gc.open_by_url(sheet_url).get_worksheet(0) # 수정: 첫 번째 탭 강제 인식
                 records = sheet.get_all_records()
                 if records: field_reqs_df = pd.DataFrame(records)
             except Exception as e: pass
@@ -540,13 +540,13 @@ if menu == "📦 발주":
                     ]
                     if gc and sheet_url:
                         try:
-                            sheet = gc.open_by_url(sheet_url).worksheet('현장요청')
+                            sheet = gc.open_by_url(sheet_url).get_worksheet(0) # 수정: 첫 번째 탭 강제 인식
                             if not sheet.get_all_values():
                                 sheet.append_row(["품목명", "농가명", "긴급도", "메모", "입력시간"])
                             sheet.append_row(new_row)
                             st.success(f"✅ '{req_item}' 요청이 구글 시트에 기록되었습니다!")
                         except Exception as e:
-                            st.error(f"시트 연결 오류: '현장요청' 탭이 있는지 확인해 주세요. ({e})")
+                            st.error(f"시트 연결 오류: 주소나 권한을 확인해 주세요. ({e})") # 오류 메시지 간소화
                     else:
                         st.session_state.field_requests.append({
                             "품목명": new_row[0], "농가명": new_row[1], "긴급도": new_row[2], "메모": new_row[3], "입력시간": new_row[4]
@@ -555,7 +555,7 @@ if menu == "📦 발주":
 
         if gc and sheet_url:
             try:
-                sheet = gc.open_by_url(sheet_url).worksheet('현장요청')
+                sheet = gc.open_by_url(sheet_url).get_worksheet(0) # 수정: 첫 번째 탭 강제 인식
                 records = sheet.get_all_records()
                 if records:
                     st.markdown('<div class="section-label">구글 시트 누적 요청 목록</div>', unsafe_allow_html=True)
