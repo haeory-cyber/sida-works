@@ -99,6 +99,9 @@ div.stButton > button { height:3.2rem; font-size:1.1rem; font-weight:700; border
 .block-container { padding-top:3rem; padding-bottom:1rem; }
 input, textarea { font-size:1rem !important; }
 .stTabs [data-baseweb="tab"] { font-size:1rem; padding:0.6rem 1rem; }
+#MainMenu {visibility:hidden;}
+footer {visibility:hidden;}
+header {visibility:hidden;}
 </style>""", unsafe_allow_html=True)
 
 if "sent_history" not in st.session_state: st.session_state.sent_history = set()
@@ -115,9 +118,13 @@ with st.sidebar:
     st.markdown("## 🤖 시다 워크")
     st.caption("Ver 24.0")
     st.divider()
-    pw = st.text_input("비밀번호", type="password")
-    if pw != "poom0118**": st.warning("비밀번호를 입력하세요."); st.stop()
-    st.success("인증 완료")
+    saved_pw = get_secret("APP_PASSWORD", "")
+    if saved_pw == "poom0118**":
+        st.success("인증 완료 (자동)")
+    else:
+        pw = st.text_input("비밀번호", type="password", autocomplete="current-password")
+        if pw != "poom0118**": st.warning("비밀번호를 입력하세요."); st.stop()
+        st.success("인증 완료")
     st.divider()
     st.markdown("**🔑 솔라피 설정**")
     st.session_state.api_key       = st.text_input("API Key",       value=st.session_state.api_key,       type="password")
