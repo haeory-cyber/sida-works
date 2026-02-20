@@ -213,35 +213,35 @@ for k, v in [
         st.session_state[k] = v
 
 # ══════════════════════════════════════════
-# 인증 (비밀번호 수정 완료)
+# 인증 (보안 강화 및 브라우저 자동완성 지원)
 # ══════════════════════════════════════════
 saved_pw = get_secret("APP_PASSWORD", "poom0118**")
-url_pw = st.query_params.get("pw", "")
-if saved_pw == "poom0118**" or url_pw == "poom0118**":
-    st.session_state.auth_passed = True
 
 if not st.session_state.auth_passed:
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;700;900&display=swap');
     * { font-family: 'Noto Sans KR', sans-serif; }
-    .login-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:80vh; }
+    .login-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top: 10vh; }
     .login-title { font-size:2.5rem; font-weight:900; color:#1a1a1a; letter-spacing:-2px; }
-    .login-sub { color:#888; margin-top:0.5rem; font-size:0.95rem; }
+    .login-sub { color:#888; margin-top:0.5rem; font-size:0.95rem; margin-bottom: 2rem; }
     </style>
     <div class="login-wrap">
     <div class="login-title">🌿 시다 워크</div>
     <div class="login-sub">품앗이생협 업무 자동화 시스템</div>
     </div>
     """, unsafe_allow_html=True)
-    pw = st.text_input("비밀번호", type="password", autocomplete="current-password")
-    if pw == "poom0118**":
-        st.session_state.auth_passed = True
-        st.rerun()
-    elif pw:
-        st.error("비밀번호가 다릅니다.")
+    
+    with st.form("login_form"):
+        pw = st.text_input("비밀번호를 입력하세요 (브라우저 자동완성 지원)", type="password", autocomplete="current-password")
+        submitted = st.form_submit_button("입장하기", use_container_width=True)
+        if submitted:
+            if pw == saved_pw:
+                st.session_state.auth_passed = True
+                st.rerun()
+            elif pw:
+                st.error("비밀번호가 다릅니다.")
     st.stop()
-
 # ══════════════════════════════════════════
 # 페이지 설정 & 스타일
 # ══════════════════════════════════════════
