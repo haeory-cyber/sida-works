@@ -9,7 +9,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 
-# 구글 시트 연동을 위한 라이브러리 (pip install gspread oauth2client)
 try:
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
@@ -22,19 +21,17 @@ except ImportError:
 # ══════════════════════════════════════════
 SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 SERVER_MEMBER_FILE  = "회원관리(전체).xlsx"
-APPSHEET_REQUEST_FILE = "발주요청_appsheet.xlsx"  # 앱시트 연동용 (향후)
+APPSHEET_REQUEST_FILE = "발주요청_appsheet.xlsx"
 
 def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
 
-# 구글 시트 클라이언트 가져오기
 @st.cache_resource
 def get_gsheet_client():
     if not GSPREAD_AVAILABLE: return None
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        # secrets.toml에 gcp_service_account 정보가 있다고 가정
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -166,7 +163,8 @@ def detect_cols(cols):
     s_farmer = next((c for c in cols if any(x in c for x in ["공급자","농가","생산자","거래처"])), None)
     s_spec   = next((c for c in cols if any(x in c for x in ["규격","단위","중량","용량"])), None)
     s_date   = next((c for c in cols if any(x in c for x in ["일시","날짜","date","Date"])), None)
-    return s_item, s_qty, s_amt, s_farmer, s_spec, s_date
+    s_vat    = next((c for c in cols if any(x in c for x in ["부가세","세액","VAT"])), None)
+    return s_item, s_qty, s_amt, s_farmer, s_spec, s_date, s_vat
 
 def to_excel(df):
     buf = io.BytesIO()
@@ -210,7 +208,7 @@ for k, v in [
     ("sender_number", get_secret("SENDER_NUMBER", "")),
     ("gmail_user", get_secret("GMAIL_USER", "")),
     ("gmail_pw", get_secret("GMAIL_APP_PW", "")),
-    ("field_requests", []),   # 구글 시트 실패 시 대체용 임시저장
+    ("field_requests", []),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -248,24 +246,14 @@ if not st.session_state.auth_passed:
 # ══════════════════════════════════════════
 # 페이지 설정 & 스타일
 # ══════════════════════════════════════════
-st.set_page_config(
-    page_title="시다 워크",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
+st.set_page_config(page_title="시다 워크", page_icon="🌿", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;700;900&family=Space+Mono&display=swap');
-
 * { font-family: 'Noto Sans KR', sans-serif; }
 code, .mono { font-family: 'Space Mono', monospace; }
-
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding: 1.5rem 2rem 2rem; }
-
-/* 사이드바, 헤더, 카드 스타일은 이전과 동일 */
 section[data-testid="stSidebar"] { background: #0f1923; border-right: 1px solid #1e2d3d; }
 section[data-testid="stSidebar"] * { color: #c8d6e5 !important; }
 section[data-testid="stSidebar"] .stTextInput input { background: #1a2735 !important; border: 1px solid #2d4057 !important; color: #fff !important; border-radius: 8px; }
@@ -288,9 +276,9 @@ with st.sidebar:
     st.caption("Ver 2.0 · 품앗이생협")
     st.divider()
     st.markdown('<div class="section-label">솔라피 설정 (문자)</div>', unsafe_allow_html=True)
-    st.session_state.api_key       = st.text_input("API Key",    value=st.session_state.api_key,       type="password", label_visibility="collapsed", placeholder="API Key")
-    st.session_state.api_secret    = st.text_input("Secret",     value=st.session_state.api_secret,    type="password", label_visibility="collapsed", placeholder="API Secret")
-    st.session_state.sender_number = st.text_input("발신번호",   value=st.session_state.sender_number, label_visibility="collapsed", placeholder="발신번호 (숫자만)")
+    st.session_state.api_key       = st.text_input("API Key", value=st.session_state.api_key, type="password", label_visibility="collapsed", placeholder="API Key")
+    st.session_state.api_secret    = st.text_input("Secret", value=st.session_state.api_secret, type="password", label_visibility="collapsed", placeholder="API Secret")
+    st.session_state.sender_number = st.text_input("발신번호", value=st.session_state.sender_number, label_visibility="collapsed", placeholder="발신번호 (숫자만)")
     st.divider()
     st.markdown('<div class="section-label">Gmail 설정 (이메일)</div>', unsafe_allow_html=True)
     st.session_state.gmail_user = st.text_input("Gmail 계정", value=st.session_state.gmail_user, placeholder="example@gmail.com")
@@ -316,20 +304,15 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-menu = st.radio(
-    "", ["📦 발주", "♻️ 제로웨이스트", "📢 이음"],
-    horizontal=True, label_visibility="collapsed"
-)
+menu = st.radio("", ["📦 발주", "♻️ 제로웨이스트", "📢 이음"], horizontal=True, label_visibility="collapsed")
 st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════════
 # 📦 발주 탭
 # ══════════════════════════════════════════════════════════════════
 if menu == "📦 발주":
-
     tab_order, tab_field, tab_send = st.tabs(["🧮 판매데이터 분석", "📍 현장 요청 (실시간)", "📤 발주 발송(농가별)"])
 
-    # ── 농가 연락처 로드 ──
     df_phone_map = pd.DataFrame()
     if os.path.exists(SERVER_CONTACT_FILE):
         try:
@@ -343,22 +326,15 @@ if menu == "📦 발주":
                     df_ci["clean_farmer"]  = df_ci[i_name].astype(str).str.replace(" ", "")
                     df_ci["clean_phone"] = df_ci[i_phone].apply(clean_phone)
                     df_ci["clean_email"] = df_ci[i_email].astype(str) if i_email else ""
-                    df_phone_map = df_ci.drop_duplicates(subset=["clean_farmer"])[
-                        ["clean_farmer", "clean_phone", "clean_email"]
-                    ]
+                    df_phone_map = df_ci.drop_duplicates(subset=["clean_farmer"])[["clean_farmer", "clean_phone", "clean_email"]]
         except:
             pass
 
-    # ══════════════════════
-    # 탭1: 판매데이터 분석 (이전과 동일)
-    # ══════════════════════
     with tab_order:
         st.markdown('<div class="section-label">💰 유동자금 설정</div>', unsafe_allow_html=True)
         col_b1, col_b2, col_b3 = st.columns([2, 1, 1])
         with col_b1:
-            budget = st.number_input(
-                "현재 유동자금 (원)", min_value=0, value=st.session_state.get("budget", 30000000), step=100000, format="%d"
-            )
+            budget = st.number_input("현재 유동자금 (원)", min_value=0, value=st.session_state.get("budget", 30000000), step=100000, format="%d")
             st.session_state.budget = budget
         with col_b2:
             safety = st.slider("안전계수", 1.0, 1.5, 1.1, step=0.1)
@@ -370,7 +346,6 @@ if menu == "📦 발주":
         st.markdown('<div class="section-label">📂 판매 실적 업로드</div>', unsafe_allow_html=True)
         up_sales = st.file_uploader("판매 실적 파일", type=["xlsx", "csv"], accept_multiple_files=True, key="ord_up", label_visibility="collapsed")
 
-        # 구글 시트에서 현장요청 읽어오기
         gc = get_gsheet_client()
         sheet_url = get_secret("REQUEST_SHEET_URL", "")
         field_reqs_df = pd.DataFrame()
@@ -380,8 +355,7 @@ if menu == "📦 발주":
                 sheet = gc.open_by_url(sheet_url).sheet1
                 records = sheet.get_all_records()
                 if records: field_reqs_df = pd.DataFrame(records)
-            except Exception as e:
-                st.warning(f"구글 시트 연동 실패: {e}")
+            except Exception as e: pass
         else:
             if st.session_state.field_requests:
                 field_reqs_df = pd.DataFrame(st.session_state.field_requests)
@@ -398,7 +372,7 @@ if menu == "📦 발주":
 
             if parts:
                 df_s = pd.concat(parts, ignore_index=True)
-                s_item, s_qty, s_amt, s_farmer, s_spec, s_date = detect_cols(df_s.columns.tolist())
+                s_item, s_qty, s_amt, s_farmer, s_spec, s_date, s_vat = detect_cols(df_s.columns.tolist())
 
                 if s_item and s_amt:
                     def norm_name(name):
@@ -441,6 +415,13 @@ if menu == "📦 발주":
                     df_t[s_qty] = df_t[s_qty].apply(to_num) if s_qty else 1
                     df_t[s_amt] = df_t[s_amt].apply(to_num)
                     df_t.loc[(df_t[s_qty] <= 0) & (df_t[s_amt] > 0), s_qty] = 1
+                    
+                    # 과세/비과세 처리
+                    if s_vat:
+                        df_t[s_vat] = df_t[s_vat].apply(to_num)
+                        df_t["과세구분"] = np.where(df_t[s_vat] > 0, "과세", "비과세")
+                    else:
+                        df_t["과세구분"] = "비과세"
 
                     if s_date:
                         df_t["__date"] = pd.to_datetime(df_t[s_date], errors="coerce")
@@ -453,7 +434,7 @@ if menu == "📦 발주":
                     df_t["__total_kg"] = df_t["__unit_kg"] * df_t[s_qty]
 
                     farmer_col = s_farmer if s_farmer else "clean_farmer"
-                    agg = df_t.groupby([farmer_col, "__disp", "구분", "__parent"]).agg(
+                    agg = df_t.groupby([farmer_col, "__disp", "구분", "__parent", "과세구분"]).agg(
                         {s_qty: "sum", s_amt: "sum", "__total_kg": "sum"}
                     ).reset_index()
 
@@ -470,7 +451,6 @@ if menu == "📦 발주":
                     agg["발주_수량"] = np.ceil(agg["판매량"] * safety / period_days)
                     agg["발주_중량"] = np.ceil(agg["__total_kg"] * safety / period_days)
 
-                    # ── 구글 시트 현장요청 가중치 반영 ──
                     urgent_items = set()
                     if not field_reqs_df.empty:
                         for _, req in field_reqs_df.iterrows():
@@ -523,9 +503,6 @@ if menu == "📦 발주":
                         <div class="budget-bar-wrap"><div class="budget-bar {bar_class}" style="width:{pct}%"></div></div>
                         """, unsafe_allow_html=True)
 
-    # ══════════════════════
-    # 탭2: 현장 요청 (구글 시트 실시간 연동)
-    # ══════════════════════
     with tab_field:
         st.markdown("""
         <div style="background:#fff9f0; border:1.5px solid #f39c12; border-radius:12px; padding:1rem 1.2rem; margin-bottom:1rem;">
@@ -568,7 +545,6 @@ if menu == "📦 발주":
                     })
                     st.success(f"✅ 임시 저장소에 '{req_item}' 요청이 추가되었습니다!")
 
-        # 시트 데이터 불러오기 및 표시
         if gc and sheet_url:
             try:
                 sheet = gc.open_by_url(sheet_url).sheet1
@@ -593,9 +569,6 @@ if menu == "📦 발주":
                     st.session_state.field_requests = []
                     st.rerun()
 
-    # ══════════════════════
-    # 탭3: 발주 발송 (농가별)
-    # ══════════════════════
     with tab_send:
         if "order_df" not in st.session_state or st.session_state.order_df is None:
             st.info("먼저 '판매데이터 분석' 탭에서 파일을 업로드해주세요.")
@@ -604,18 +577,21 @@ if menu == "📦 발주":
             df_saip = agg_all[agg_all["구분"] == "지족(사입)"]
             df_balju = agg_all[agg_all["구분"] == "일반업체"]
             
-            sub_tab1, sub_tab2 = st.tabs([f"🌾 농가 발주 대상 ({len(df_balju['업체명'].unique())}곳)", f"🛒 지족점 사입 ({len(df_saip['업체명'].unique())}분류)"])
+            sub_tab1, sub_tab2 = st.tabs([f"🌾 농가 발주 대상", f"🛒 지족점 사입"])
             
             with sub_tab1:
+                tax_type = st.radio("과세 구분 선택", ["비과세", "과세"], horizontal=True)
+                df_balju_tax = df_balju[df_balju["과세구분"] == tax_type]
+                
                 col_left, col_right = st.columns([1, 2])
                 with col_left:
                     st.markdown('<div class="section-label">농가 선택</div>', unsafe_allow_html=True)
-                    farmer_list = df_balju["업체명"].unique().tolist()
+                    farmer_list = df_balju_tax["업체명"].unique().tolist()
                     if not farmer_list:
-                        st.warning("발주 대상 농가가 없습니다.")
+                        st.warning(f"{tax_type} 발주 대상 농가가 없습니다.")
                     else:
                         sel_farmer = st.selectbox("발주할 농가를 선택하세요", farmer_list, label_visibility="collapsed")
-                        fd = df_balju[df_balju["업체명"] == sel_farmer]
+                        fd = df_balju_tax[df_balju_tax["업체명"] == sel_farmer]
                         phone = fd["clean_phone"].iloc[0] if "clean_phone" in fd.columns else ""
                         email = fd["clean_email"].iloc[0] if "clean_email" in fd.columns else ""
                         farmer_total = fd["총판매액"].sum()
@@ -672,15 +648,18 @@ if menu == "📦 발주":
                                 else: st.warning("올바른 이메일 주소를 입력해주세요.")
 
             with sub_tab2:
-                st.markdown("### 🛒 지족점 사입 목록")
-                if df_saip.empty: st.info("사입 데이터가 없습니다.")
+                saip_type = st.radio("사입 분류 선택", ["지족점정육", "지족점야채", "지족점과일", "지족매장"], horizontal=True)
+                df_saip_sub = df_saip[df_saip["업체명"] == saip_type]
+                
+                st.markdown(f"### 🛒 {saip_type} 목록")
+                if df_saip_sub.empty: 
+                    st.info(f"{saip_type} 사입 데이터가 없습니다.")
                 else:
-                    show_cols = ["발주상태", "업체명", "상품명", "판매량", "발주_수량", "발주_중량", "총판매액"]
-                    st.dataframe(df_saip[show_cols], hide_index=True, use_container_width=True)
-
+                    show_cols = ["발주상태", "업체명", "상품명", "과세구분", "판매량", "발주_수량", "총판매액"]
+                    st.dataframe(df_saip_sub[show_cols], hide_index=True, use_container_width=True)
 
 # ══════════════════════════════════════════
-# ♻️ 제로웨이스트 및 📢 이음 코드는 기존과 동일하여 생략 없이 유지
+# ♻️ 제로웨이스트 및 📢 이음 코드
 # ══════════════════════════════════════════
 elif menu == "♻️ 제로웨이스트":
     st.markdown("### ♻️ 제로웨이스트 판매 분석")
@@ -694,7 +673,7 @@ elif menu == "♻️ 제로웨이스트":
             if d is not None: parts.append(d)
         if parts:
             df_zw = pd.concat(parts, ignore_index=True)
-            s_item, s_qty, s_amt, s_farmer, s_spec, _ = detect_cols(df_zw.columns.tolist())
+            s_item, s_qty, s_amt, s_farmer, s_spec, _, _ = detect_cols(df_zw.columns.tolist())
             if s_item and s_amt:
                 def parent_zw(x):
                     s = str(x)
@@ -755,11 +734,7 @@ elif menu == "📢 이음":
                     oc1, oc2 = st.columns(2)
                     sel_period2 = oc1.selectbox("분석 기간", ["최근 1개월", "최근 3개월", "최근 6개월"], index=1)
                     min_cnt     = oc2.number_input("최소 구매횟수", min_value=1, max_value=20, value=4)
-                    
-                    # 기간 및 횟수에 따른 필터링 로직 (생략 없이 이전 코드 적용)
                     pass 
 
-    with tab_m1:
-        st.write("판매 기반 타겟팅")
-    with tab_m2:
-        st.write("회원 직접 검색")
+    with tab_m1: st.write("판매 기반 타겟팅")
+    with tab_m2: st.write("회원 직접 검색")
