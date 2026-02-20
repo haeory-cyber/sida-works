@@ -104,11 +104,24 @@ footer {visibility:hidden;}
 header {visibility:hidden;}
 </style>""", unsafe_allow_html=True)
 
-if "sent_history" not in st.session_state: st.session_state.sent_history = set()
-
 def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
+
+# ── 메인 화면 비밀번호 인증 ──
+saved_pw = get_secret("APP_PASSWORD", "")
+if saved_pw != "poom0118**":
+    st.title("🔒 시다 워크 로그인")
+    st.caption("시스템 접근을 위해 비밀번호를 입력해주세요.")
+    pw = st.text_input("비밀번호", type="password", autocomplete="current-password")
+    if pw != "poom0118**":
+        st.stop()
+    else:
+        st.success("인증 완료!")
+        st.rerun()
+
+# ── 여기서부터 실제 시스템 ──
+if "sent_history" not in st.session_state: st.session_state.sent_history = set()
 
 if "api_key"       not in st.session_state: st.session_state.api_key       = get_secret("SOLAPI_API_KEY")
 if "api_secret"    not in st.session_state: st.session_state.api_secret    = get_secret("SOLAPI_API_SECRET")
@@ -117,14 +130,6 @@ if "sender_number" not in st.session_state: st.session_state.sender_number = get
 with st.sidebar:
     st.markdown("## 🤖 시다 워크")
     st.caption("Ver 24.0")
-    st.divider()
-    saved_pw = get_secret("APP_PASSWORD", "")
-    if saved_pw == "poom0118**":
-        st.success("인증 완료 (자동)")
-    else:
-        pw = st.text_input("비밀번호", type="password", autocomplete="current-password")
-        if pw != "poom0118**": st.warning("비밀번호를 입력하세요."); st.stop()
-        st.success("인증 완료")
     st.divider()
     st.markdown("**🔑 솔라피 설정**")
     st.session_state.api_key       = st.text_input("API Key",       value=st.session_state.api_key,       type="password")
