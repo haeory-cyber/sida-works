@@ -108,17 +108,24 @@ def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
 
-# ── 메인 화면 비밀번호 인증 ──
+# ── 메인 화면 비밀번호 인증 (메모리 기능 추가) ──
+if "auth_passed" not in st.session_state:
+    st.session_state.auth_passed = False
+
 saved_pw = get_secret("APP_PASSWORD", "")
-if saved_pw != "poom0118**":
+if saved_pw == "poom0118**":
+    st.session_state.auth_passed = True
+
+if not st.session_state.auth_passed:
     st.title("🔒 시다 워크 로그인")
     st.caption("시스템 접근을 위해 비밀번호를 입력해주세요.")
     pw = st.text_input("비밀번호", type="password", autocomplete="current-password")
-    if pw != "poom0118**":
-        st.stop()
-    else:
-        st.success("인증 완료!")
+    if pw == "poom0118**":
+        st.session_state.auth_passed = True
         st.rerun()
+    else:
+        if pw: st.error("비밀번호가 다릅니다.")
+        st.stop()
 
 # ── 여기서부터 실제 시스템 ──
 if "sent_history" not in st.session_state: st.session_state.sent_history = set()
