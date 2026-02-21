@@ -717,8 +717,17 @@ try:
             "content": "내용"
         })
         
-        # 4. 화면에 표 그리기 (불필요한 id 컬럼은 숨김)
-        st.dataframe(df[["접수시간", "품목명", "농가명", "긴급도", "내용"]], use_container_width=True)
+        # 4. 시간 변환 (UTC -> 한국 시간) 및 포맷 변경
+        try:
+            df["접수시간"] = pd.to_datetime(df["접수시간"])
+            if df["접수시간"].dt.tz is None:
+                df["접수시간"] = df["접수시간"].dt.tz_localize('UTC')
+            df["접수시간"] = df["접수시간"].dt.tz_convert('Asia/Seoul').dt.strftime('%m-%d %H:%M')
+        except Exception as tz_e:
+            pass # 변환 실패 시 원본 시간 유지
+        
+        # 5. 화면에 표 그리기 (hide_index=True 추가로 불필요한 번호 숨김)
+        st.dataframe(df[["접수시간", "품목명", "농가명", "긴급도", "내용"]], hide_index=True, use_container_width=True)
     else:
         st.info("들어온 현장 요청이 없습니다.")
         
