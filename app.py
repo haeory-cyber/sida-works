@@ -10,14 +10,6 @@ from email.mime.multipart import MIMEMultipart
 import json
 from supabase import create_client, Client
 
-# 1. 라이브러리 로드 방식 개선 (신중함 유지)
-try:
-    import gspread
-    from google.oauth2.service_account import Credentials # 최신 인증 방식으로 변경
-    GSPREAD_AVAILABLE = True
-except ImportError:
-    GSPREAD_AVAILABLE = False
-
 # ══════════════════════════════════════════
 # 설정
 # ══════════════════════════════════════════
@@ -28,47 +20,6 @@ def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
 
-# 2. 핵심 수술 부위: 구글 시트 연결 함수
-@st.cache_resource
-def get_gsheet_client():
-    if not GSPREAD_AVAILABLE:
-        st.error("gspread 또는 google-auth 라이브러리가 설치되지 않았습니다.")
-        return None
-    try:
-        # 구글이 권장하는 최신 스코프 설정
-        scopes = [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive'
-        ]
-        
-        if "gcp_service_account" in st.secrets:
-            # 딕셔너리 변환 및 인증 수행
-            creds_info = dict(st.secrets["gcp_service_account"])
-            creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-            return gspread.authorize(creds)
-        else:
-            st.error("Secrets에 'gcp_service_account' 키가 없습니다.")
-    except Exception as e:
-        # 가식 없이 에러 내용을 후니님께 직고함
-        st.error(f"구글 시트 인증 중 오류 발생: {e}")
-    return None
-
-# 3. 데이터 로딩 함수 (탭 인식 오류 해결 버전)
-def load_gsheet_data(sheet_url):
-    gc = get_gsheet_client()
-    if not gc: return None
-    try:
-        doc = gc.open_by_url(sheet_url)
-        # 0번 인덱스 대신, 가능한 첫 번째 시트를 안전하게 가져옴
-        worksheet = doc.get_worksheet(0) 
-        data = worksheet.get_all_records()
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"시트 데이터를 읽는 중 오류 발생: {e}")
-        return None
-
-# (이후 후니님의 기존 로직 - 미르가 짠 핵심 코드는 그대로 유지함)
-# ... [기존 코드의 데이터 처리 및 시각화 로직 계속] ...
 # ══════════════════════════════════════════
 # 유틸 함수
 # ══════════════════════════════════════════
@@ -376,19 +327,9 @@ if menu == "📦 발주":
         st.markdown('<div class="section-label">📂 판매 실적 업로드</div>', unsafe_allow_html=True)
         up_sales = st.file_uploader("판매 실적 파일", type=["xlsx", "csv"], accept_multiple_files=True, key="ord_up", label_visibility="collapsed")
 
-        gc = get_gsheet_client()
-        sheet_url = get_secret("REQUEST_SHEET_URL", "")
         field_reqs_df = pd.DataFrame()
-        
-        if gc and sheet_url:
-            try:
-                sheet = gc.open_by_url(sheet_url).get_worksheet(0) # 수정: 첫 번째 탭 강제 인식
-                records = sheet.get_all_records()
-                if records: field_reqs_df = pd.DataFrame(records)
-            except Exception as e: pass
-        else:
-            if st.session_state.field_requests:
-                field_reqs_df = pd.DataFrame(st.session_state.field_requests)
+        if st.session_state.field_requests:
+            field_reqs_df = pd.DataFrame(st.session_state.field_requests)
 
         if not field_reqs_df.empty:
             st.markdown('<div class="section-label">📍 현장 요청 반영 중</div>', unsafe_allow_html=True)
@@ -535,19 +476,10 @@ if menu == "📦 발주":
     with tab_field:
         st.markdown("""
         <div style="background:#fff9f0; border:1.5px solid #f39c12; border-radius:12px; padding:1rem 1.2rem; margin-bottom:1rem;">
-        <b>📍 현장 요청 입력 (실시간 공유)</b><br>
-        <span style="font-size:0.85rem; color:#666;">입력된 데이터는 구글 시트를 통해 모든 발주 담당자에게 실시간으로 공유됩니다.</span>
+        <b>📍 현장 요청 입력 (임시 저장소)</b><br>
+        <span style="font-size:0.85rem; color:#666;">입력된 데이터는 앱 내에 임시로 보관됩니다. (메인 대시보드는 아래 수파베이스 목록을 확인하세요)</span>
         </div>
         """, unsafe_allow_html=True)
-
-        gc = get_gsheet_client()
-        sheet_url = get_secret("REQUEST_SHEET_URL", "")
-        
-        if not GSPREAD_AVAILABLE:
-            st.error("⚠️ `gspread` 패키지가 설치되지 않았습니다. 터미널에서 `pip install gspread oauth2client`를 실행해주세요.")
-        elif not gc or not sheet_url:
-            st.warning("⚠️ 구글 시트 연동 정보가 설정되지 않았습니다. 임시 저장소(세션)를 사용합니다.")
-            st.info("연동 방법: secrets.toml에 gcp_service_account(JSON)와 REQUEST_SHEET_URL(시트 주소)을 설정하세요.")
 
         with st.form("field_request_form", clear_on_submit=True):
             fc1, fc2, fc3 = st.columns([3, 2, 2])
@@ -568,44 +500,17 @@ if menu == "📦 발주":
                         req_note if req_note else "-", 
                         datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                     ]
-                    if gc and sheet_url:
-                        try:
-                            sheet = gc.open_by_url(sheet_url).get_worksheet(0) # 수정: 첫 번째 탭 강제 인식
-                            if not sheet.get_all_values():
-                                sheet.append_row(["품목명", "농가명", "긴급도", "메모", "입력시간"])
-                            sheet.append_row(new_row)
-                            st.success(f"✅ '{req_item}' 요청이 구글 시트에 기록되었습니다!")
-                        except Exception as e:
-                            st.error(f"시트 연결 오류: 주소나 권한을 확인해 주세요. ({e})") # 오류 메시지 간소화
-                    else:
-                        st.session_state.field_requests.append({
-                            "품목명": new_row[0], "농가명": new_row[1], "긴급도": new_row[2], "메모": new_row[3], "입력시간": new_row[4]
-                        })
-                        st.success(f"✅ 임시 저장소에 '{req_item}' 요청이 추가되었습니다!")
+                    st.session_state.field_requests.append({
+                        "품목명": new_row[0], "농가명": new_row[1], "긴급도": new_row[2], "메모": new_row[3], "입력시간": new_row[4]
+                    })
+                    st.success(f"✅ 임시 저장소에 '{req_item}' 요청이 추가되었습니다!")
 
-        if gc and sheet_url:
-            try:
-                sheet = gc.open_by_url(sheet_url).get_worksheet(0) # 수정: 첫 번째 탭 강제 인식
-                records = sheet.get_all_records()
-                if records:
-                    st.markdown('<div class="section-label">구글 시트 누적 요청 목록</div>', unsafe_allow_html=True)
-                    req_df = pd.DataFrame(records)
-                    st.dataframe(req_df, hide_index=True, use_container_width=True)
-                    if st.button("🗑 현장요청 시트 비우기", use_container_width=True):
-                        sheet.clear()
-                        sheet.append_row(["품목명", "농가명", "긴급도", "메모", "입력시간"])
-                        st.rerun()
-                else:
-                    st.info("현재 구글 시트에 누적된 요청이 없습니다.")
-            except Exception as e:
-                pass
-        else:
-            if st.session_state.field_requests:
-                st.markdown('<div class="section-label">현재 요청 목록 (임시)</div>', unsafe_allow_html=True)
-                st.dataframe(pd.DataFrame(st.session_state.field_requests), hide_index=True, use_container_width=True)
-                if st.button("🗑 임시 데이터 초기화", use_container_width=True):
-                    st.session_state.field_requests = []
-                    st.rerun()
+        if st.session_state.field_requests:
+            st.markdown('<div class="section-label">현재 요청 목록 (임시)</div>', unsafe_allow_html=True)
+            st.dataframe(pd.DataFrame(st.session_state.field_requests), hide_index=True, use_container_width=True)
+            if st.button("🗑 임시 데이터 초기화", use_container_width=True):
+                st.session_state.field_requests = []
+                st.rerun()
 
     with tab_send:
         if "order_df" not in st.session_state or st.session_state.order_df is None:
@@ -782,41 +687,11 @@ elif menu == "📢 이음":
 
     with tab_m1: st.write("판매 기반 타겟팅")
     with tab_m2: st.write("회원 직접 검색")
-import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
 
-def run_google_diagnostics():
-    st.error("🔍 **[시다의 구글 연결 정밀 진단]**")
-    try:
-        if "gcp_service_account" not in st.secrets:
-            st.error("❌ 1단계 실패: secrets.toml에 암호키가 없습니다.")
-            return
-        st.success("✅ 1단계 성공: 암호키(JSON) 확인됨")
-
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=scopes)
-        gc = gspread.authorize(creds)
-        st.success("✅ 2단계 성공: 구글 API 로그인(인증) 통과")
-
-        sheet_url = st.secrets.get("REQUEST_SHEET_URL", "")
-        doc = gc.open_by_url(sheet_url)
-        st.success("✅ 3단계 성공: 구글 시트 문서 접근 성공 (공유 권한 정상)")
-
-        sheet = doc.get_worksheet(0)
-        st.success(f"✅ 4단계 성공: 첫 번째 탭 '{sheet.title}' 확인 완료")
-
-    except gspread.exceptions.APIError as e:
-        st.error(f"❌ API 오류: 구글 클라우드에서 Google Sheets/Drive API가 꺼져 있을 수 있습니다. ({e})")
-    except gspread.exceptions.SpreadsheetNotFound:
-        st.error("❌ 공유 오류: 시다 이메일이 시트에 편집자로 초대되지 않았거나 주소가 다릅니다.")
-    except Exception as e:
-        st.error(f"❌ 기타 오류: {e}")
-
-run_google_diagnostics()
-
-# --- [수파베이스 현장 요청 대시보드 추가] ---
-st.write("---") # 화면에 구분선 긋기
+# ══════════════════════════════════════════
+# 수파베이스 현장 요청 대시보드 (공통 하단)
+# ══════════════════════════════════════════
+st.write("---") 
 st.subheader("📋 실시간 현장 요청 목록 (수파베이스)")
 
 try:
@@ -849,6 +724,3 @@ try:
         
 except Exception as e:
     st.error(f"❌ 수파베이스 데이터를 불러오는 중 오류가 발생했습니다: {e}")
-
-
-
