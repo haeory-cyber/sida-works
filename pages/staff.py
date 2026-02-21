@@ -1,40 +1,32 @@
 import streamlit as st
-import pandas as pd
-import os
-from datetime import datetime
+from supabase import create_client, Client
 
-# 데이터 저장용 CSV 파일 이름
-FILE_PATH = 'requests.csv'
+# 1. 수파베이스 연결 설정 (스트림릿 금고에서 열쇠 가져오기)
+url: str = st.secrets["supabase"]["url"]
+key: str = st.secrets["supabase"]["key"]
+supabase: Client = create_client(url, key)
 
-st.title("📝 현장 요청 입력")
+st.title("📝 현장 요청 입력 (수파베이스 연동)")
 
-# 직원용 입력 폼
+# 2. 직원용 입력 폼
 with st.form("request_form", clear_on_submit=True):
     item_name = st.text_input("품목명 (예: 딸기, 상추)")
     farmer_name = st.text_input("농가명")
     urgency = st.selectbox("긴급도", ["보통", "긴급", "매우 긴급"])
-    memo = st.text_area("메모")
-    
+    content = st.text_area("내용")
+
     submitted = st.form_submit_button("요청 추가")
-    
+
     if submitted:
-        if item_name and farmer_name:
-            # 입력된 데이터를 데이터프레임으로 변환
-            new_data = pd.DataFrame([{
-                "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "품목명": item_name,
-                "농가명": farmer_name,
-                "긴급도": urgency,
-                "메모": memo,
-                "상태": "대기중"
-            }])
+        # 3. 수파베이스 'staff_data' 표에 데이터 전송
+        try:
+            data, count = supabase.table("staff_data").insert({
+                "item_name": item_name,
+                "farmer_name": farmer_name,
+                "urgency": urgency,
+                "content": content
+            }).execute()
             
-            # CSV 파일이 없으면 새로 만들고, 있으면 아래에 추가
-            if not os.path.exists(FILE_PATH):
-                new_data.to_csv(FILE_PATH, index=False, encoding='utf-8-sig')
-            else:
-                new_data.to_csv(FILE_PATH, mode='a', header=False, index=False, encoding='utf-8-sig')
-            
-            st.success("✅ 현장 요청이 저장되었습니다.")
-        else:
-            st.warning("⚠️ 품목명과 농가명은 필수 입력입니다.")
+            st.success("✅ 현장 요청이 수파베이스에 성공적으로 저장되었습니다!")
+        except Exception as e:
+            st.error(f"❌ 오류가 발생했습니다: {e}")
