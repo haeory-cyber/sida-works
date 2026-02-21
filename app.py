@@ -8,6 +8,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
+from supabase import create_client, Client
 
 # 1. 라이브러리 로드 방식 개선 (신중함 유지)
 try:
@@ -813,5 +814,41 @@ def run_google_diagnostics():
         st.error(f"❌ 기타 오류: {e}")
 
 run_google_diagnostics()
+
+# --- [수파베이스 현장 요청 대시보드 추가] ---
+st.write("---") # 화면에 구분선 긋기
+st.subheader("📋 실시간 현장 요청 목록 (수파베이스)")
+
+try:
+    # 1. 수파베이스 연결 설정
+    url: str = st.secrets["supabase"]["url"]
+    key: str = st.secrets["supabase"]["key"]
+    supabase: Client = create_client(url, key)
+
+    # 2. staff_data 표에서 데이터를 가져오되, 최신순(created_at 내림차순)으로 정렬
+    response = supabase.table("staff_data").select("*").order("created_at", desc=True).execute()
+    data = response.data
+    
+    if data:
+        # 3. 가져온 데이터를 엑셀 표(데이터프레임) 형태로 변환
+        df = pd.DataFrame(data)
+        
+        # 보기 좋게 한글 이름으로 열 제목 변경
+        df = df.rename(columns={
+            "created_at": "접수시간",
+            "item_name": "품목명",
+            "farmer_name": "농가명",
+            "urgency": "긴급도",
+            "content": "내용"
+        })
+        
+        # 4. 화면에 표 그리기 (불필요한 id 컬럼은 숨김)
+        st.dataframe(df[["접수시간", "품목명", "농가명", "긴급도", "내용"]], use_container_width=True)
+    else:
+        st.info("들어온 현장 요청이 없습니다.")
+        
+except Exception as e:
+    st.error(f"❌ 수파베이스 데이터를 불러오는 중 오류가 발생했습니다: {e}")
+
 
 
