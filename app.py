@@ -11,7 +11,7 @@ import json
 from supabase import create_client, Client
 
 # ══════════════════════════════════════════
-# 설정
+# 설정 및 수파베이스 공통 연결
 # ══════════════════════════════════════════
 SERVER_CONTACT_FILE = "농가관리 목록_20260208 (전체).xlsx"
 SERVER_MEMBER_FILE  = "회원관리(전체).xlsx"
@@ -19,6 +19,14 @@ SERVER_MEMBER_FILE  = "회원관리(전체).xlsx"
 def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
+
+# 수파베이스 통신망을 앱 전체에서 쓰기 위해 위로 끌어올림
+try:
+    sb_url: str = st.secrets["supabase"]["url"]
+    sb_key: str = st.secrets["supabase"]["key"]
+    supabase: Client = create_client(sb_url, sb_key)
+except:
+    supabase = None
 
 # ══════════════════════════════════════════
 # 유틸 함수
@@ -552,6 +560,27 @@ if menu == "📦 발주":
                     if farmer_list and sel_farmer:
                         st.markdown('<div class="section-label">발주 내역 확인 및 수정</div>', unsafe_allow_html=True)
                         
+                        # [핵심 수술 부위: 수파베이스 현장요청 부분 일치 매칭 로직]
+                        matched_requests = []
+                        if supabase:
+                            try:
+                                req_res = supabase.table("staff_data").select("*").order("created_at", desc=True).execute()
+                                if req_res.data:
+                                    farmer_items = fd["__parent"].unique().tolist()
+                                    for req in req_res.data:
+                                        req_item = str(req.get("item_name", "")).replace(" ", "")
+                                        # 현장에서 적은 단어가 농가 취급품목 이름에 조금이라도 포함되어 있는지 검사
+                                        if req_item and any(req_item in f_item.replace(" ", "") for f_item in farmer_items):
+                                            matched_requests.append(req)
+                            except Exception as e:
+                                pass
+                        
+                        # 1. 시각적 알림 경고창 띄우기
+                        if matched_requests:
+                            st.warning(f"🚨 현장에서 올라온 **{sel_farmer}** 관련 매칭 요청이 {len(matched_requests)}건 있습니다! (아래 메시지에 자동 추가됨)")
+                            for mr in matched_requests:
+                                st.info(f"👉 **품목:** {mr.get('item_name','')} / **긴급도:** {mr.get('urgency','')} / **내용:** {mr.get('content','')}")
+
                         def generate_order_text(df_src):
                             grp = df_src.groupby(["과세구분", "__parent"]).agg({"발주_수량": "sum"}).reset_index()
                             lines = []
@@ -560,13 +589,22 @@ if menu == "📦 발주":
                                 lines.append(f"- {prefix}{r['__parent']}: {int(r['발주_수량'])}개")
                             return lines
 
-                        default_msg = "\n".join(
-                            [f"[품앗이소비자생활협동조합 발주 요청]"] +
-                            [f"{sel_farmer} 농가님, 안녕하세요."] +
-                            [f"조합원님들의 사랑으로 판매된 품목의 추가 발주를 요청드립니다.\n"] +
-                            generate_order_text(fd) +
-                            ["\n정직한 땀방울에 항상 감사드립니다. 🙏"]
-                        )
+                        # 2. 메시지 텍스트 조립 (현장 요청 이어 붙이기)
+                        base_lines = [
+                            f"[품앗이소비자생활협동조합 발주 요청]",
+                            f"{sel_farmer} 농가님, 안녕하세요.",
+                            f"조합원님들의 사랑으로 판매된 품목의 추가 발주를 요청드립니다.\n"
+                        ]
+                        base_lines.extend(generate_order_text(fd))
+                        
+                        if matched_requests:
+                            base_lines.append("\n[📌 현장 추가 요청 (확인 부탁드립니다)]")
+                            for mr in matched_requests:
+                                note = f" - {mr.get('content','')}" if mr.get('content','') else ""
+                                base_lines.append(f"- {mr.get('item_name','')} ({mr.get('urgency','')}){note}")
+                                
+                        base_lines.append("\n정직한 땀방울에 항상 감사드립니다. 🙏")
+                        default_msg = "\n".join(base_lines)
                         
                         msg_input = st.text_area("발주 문구 및 수량 (자유롭게 수정하세요)", value=default_msg, height=250, key=f"msg_edit_{sel_farmer}")
                         
@@ -694,42 +732,40 @@ elif menu == "📢 이음":
 st.write("---") 
 st.subheader("📋 실시간 현장 요청 목록 (수파베이스)")
 
-try:
-    # 1. 수파베이스 연결 설정
-    url: str = st.secrets["supabase"]["url"]
-    key: str = st.secrets["supabase"]["key"]
-    supabase: Client = create_client(url, key)
-
-    # 2. staff_data 표에서 데이터를 가져오되, 최신순(created_at 내림차순)으로 정렬
-    response = supabase.table("staff_data").select("*").order("created_at", desc=True).execute()
-    data = response.data
-    
-    if data:
-        # 3. 가져온 데이터를 엑셀 표(데이터프레임) 형태로 변환
-        df = pd.DataFrame(data)
+if supabase:
+    try:
+        # staff_data 표에서 데이터를 가져오되, 최신순(created_at 내림차순)으로 정렬
+        response = supabase.table("staff_data").select("*").order("created_at", desc=True).execute()
+        data = response.data
         
-        # 보기 좋게 한글 이름으로 열 제목 변경
-        df = df.rename(columns={
-            "created_at": "접수시간",
-            "item_name": "품목명",
-            "farmer_name": "농가명",
-            "urgency": "긴급도",
-            "content": "내용"
-        })
-        
-        # 4. 시간 변환 (UTC -> 한국 시간) 및 포맷 변경
-        try:
-            df["접수시간"] = pd.to_datetime(df["접수시간"])
-            if df["접수시간"].dt.tz is None:
-                df["접수시간"] = df["접수시간"].dt.tz_localize('UTC')
-            df["접수시간"] = df["접수시간"].dt.tz_convert('Asia/Seoul').dt.strftime('%m-%d %H:%M')
-        except Exception as tz_e:
-            pass # 변환 실패 시 원본 시간 유지
-        
-        # 5. 화면에 표 그리기 (hide_index=True 추가로 불필요한 번호 숨김)
-        st.dataframe(df[["접수시간", "품목명", "농가명", "긴급도", "내용"]], hide_index=True, use_container_width=True)
-    else:
-        st.info("들어온 현장 요청이 없습니다.")
-        
-except Exception as e:
-    st.error(f"❌ 수파베이스 데이터를 불러오는 중 오류가 발생했습니다: {e}")
+        if data:
+            # 가져온 데이터를 엑셀 표(데이터프레임) 형태로 변환
+            df = pd.DataFrame(data)
+            
+            # 보기 좋게 한글 이름으로 열 제목 변경
+            df = df.rename(columns={
+                "created_at": "접수시간",
+                "item_name": "품목명",
+                "farmer_name": "농가명",
+                "urgency": "긴급도",
+                "content": "내용"
+            })
+            
+            # 시간 변환 (UTC -> 한국 시간) 및 포맷 변경
+            try:
+                df["접수시간"] = pd.to_datetime(df["접수시간"])
+                if df["접수시간"].dt.tz is None:
+                    df["접수시간"] = df["접수시간"].dt.tz_localize('UTC')
+                df["접수시간"] = df["접수시간"].dt.tz_convert('Asia/Seoul').dt.strftime('%m-%d %H:%M')
+            except Exception as tz_e:
+                pass # 변환 실패 시 원본 시간 유지
+            
+            # 화면에 표 그리기 (hide_index=True 추가로 불필요한 번호 숨김)
+            st.dataframe(df[["접수시간", "품목명", "농가명", "긴급도", "내용"]], hide_index=True, use_container_width=True)
+        else:
+            st.info("들어온 현장 요청이 없습니다.")
+            
+    except Exception as e:
+        st.error(f"❌ 수파베이스 데이터를 불러오는 중 오류가 발생했습니다: {e}")
+else:
+    st.error("❌ 수파베이스 설정이 확인되지 않았습니다.")
