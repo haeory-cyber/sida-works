@@ -5,3 +5,4 @@ requests
 plotly
 gspread
 oauth2client
+supabase
