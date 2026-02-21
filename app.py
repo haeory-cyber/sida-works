@@ -197,6 +197,7 @@ for k, v in [
     ("gmail_user", get_secret("GMAIL_USER", "")),
     ("gmail_pw", get_secret("GMAIL_APP_PW", "")),
     ("field_requests", []),
+    ("show_all_requests", False), # 전체 요청 보기 상태
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -734,13 +735,14 @@ st.subheader("📋 실시간 현장 요청 목록 (수파베이스)")
 
 if supabase:
     try:
-        # staff_data 표에서 데이터를 가져오되, 최신순(created_at 내림차순)으로 정렬
+        # 1. staff_data 표에서 데이터를 가져오되, 최신순(created_at 내림차순)으로 정렬
         response = supabase.table("staff_data").select("*").order("created_at", desc=True).execute()
         data = response.data
         
         if data:
-            # 가져온 데이터를 엑셀 표(데이터프레임) 형태로 변환
+            # 2. 가져온 데이터를 엑셀 표(데이터프레임) 형태로 변환하고 '완료' 체크박스 열 추가
             df = pd.DataFrame(data)
+            df.insert(0, "완료", False)
             
             # 보기 좋게 한글 이름으로 열 제목 변경
             df = df.rename(columns={
@@ -758,10 +760,52 @@ if supabase:
                     df["접수시간"] = df["접수시간"].dt.tz_localize('UTC')
                 df["접수시간"] = df["접수시간"].dt.tz_convert('Asia/Seoul').dt.strftime('%m-%d %H:%M')
             except Exception as tz_e:
-                pass # 변환 실패 시 원본 시간 유지
+                pass 
             
-            # 화면에 표 그리기 (hide_index=True 추가로 불필요한 번호 숨김)
-            st.dataframe(df[["접수시간", "품목명", "농가명", "긴급도", "내용"]], hide_index=True, use_container_width=True)
+            # 3. 10개씩 보기 / 더보기 로직 적용
+            if not st.session_state.show_all_requests and len(df) > 10:
+                display_df = df.head(10)
+                has_more = True
+            else:
+                display_df = df
+                has_more = False
+
+            # 4. 체크박스가 포함된 편집 가능한 표 그리기 (id 열은 숨김)
+            edited_df = st.data_editor(
+                display_df[["완료", "접수시간", "품목명", "농가명", "긴급도", "내용", "id"]],
+                column_config={
+                    "id": None, # 화면에서 id는 숨김 처리
+                    "완료": st.column_config.CheckboxColumn("처리 완료", help="발주가 끝난 항목을 체크하세요.", default=False)
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+            # 5. 하단 버튼 구역 (삭제 및 더보기)
+            col_btn1, col_btn2 = st.columns([1, 1])
+            
+            with col_btn1:
+                if st.button("🗑️ 체크된 항목 삭제", type="primary"):
+                    to_delete = edited_df[edited_df["완료"] == True]["id"].tolist()
+                    if to_delete:
+                        for req_id in to_delete:
+                            supabase.table("staff_data").delete().eq("id", req_id).execute()
+                        st.success(f"✅ {len(to_delete)}개의 요청이 영구 삭제되었습니다.")
+                        time.sleep(1) # 삭제 후 자연스러운 화면 전환을 위한 대기
+                        st.rerun()
+                    else:
+                        st.warning("삭제할 항목을 먼저 체크해 주세요.")
+                        
+            with col_btn2:
+                if has_more:
+                    if st.button("⬇️ 전체 목록 펼치기", use_container_width=True):
+                        st.session_state.show_all_requests = True
+                        st.rerun()
+                elif st.session_state.show_all_requests and len(df) > 10:
+                    if st.button("⬆️ 10개만 보기 (접기)", use_container_width=True):
+                        st.session_state.show_all_requests = False
+                        st.rerun()
+                        
         else:
             st.info("들어온 현장 요청이 없습니다.")
             
