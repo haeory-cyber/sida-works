@@ -20,7 +20,6 @@ def get_secret(k, fb=""):
     try: return st.secrets.get(k, fb)
     except: return fb
 
-# 수파베이스 통신망을 앱 전체에서 쓰기 위해 위로 끌어올림
 try:
     sb_url: str = st.secrets["supabase"]["url"]
     sb_key: str = st.secrets["supabase"]["key"]
@@ -197,13 +196,13 @@ for k, v in [
     ("gmail_user", get_secret("GMAIL_USER", "")),
     ("gmail_pw", get_secret("GMAIL_APP_PW", "")),
     ("field_requests", []),
-    ("show_all_requests", False), # 전체 요청 보기 상태
+    ("show_all_requests", False),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
 
 # ══════════════════════════════════════════
-# 인증 (보안 강화 및 브라우저 자동완성 지원)
+# 인증
 # ══════════════════════════════════════════
 saved_pw = get_secret("APP_PASSWORD", "poom0118**")
 
@@ -561,7 +560,6 @@ if menu == "📦 발주":
                     if farmer_list and sel_farmer:
                         st.markdown('<div class="section-label">발주 내역 확인 및 수정</div>', unsafe_allow_html=True)
                         
-                        # [핵심 수술 부위: 수파베이스 현장요청 부분 일치 매칭 로직]
                         matched_requests = []
                         if supabase:
                             try:
@@ -570,13 +568,11 @@ if menu == "📦 발주":
                                     farmer_items = fd["__parent"].unique().tolist()
                                     for req in req_res.data:
                                         req_item = str(req.get("item_name", "")).replace(" ", "")
-                                        # 현장에서 적은 단어가 농가 취급품목 이름에 조금이라도 포함되어 있는지 검사
                                         if req_item and any(req_item in f_item.replace(" ", "") for f_item in farmer_items):
                                             matched_requests.append(req)
                             except Exception as e:
                                 pass
                         
-                        # 1. 시각적 알림 경고창 띄우기
                         if matched_requests:
                             st.warning(f"🚨 현장에서 올라온 **{sel_farmer}** 관련 매칭 요청이 {len(matched_requests)}건 있습니다! (아래 메시지에 자동 추가됨)")
                             for mr in matched_requests:
@@ -590,7 +586,6 @@ if menu == "📦 발주":
                                 lines.append(f"- {prefix}{r['__parent']}: {int(r['발주_수량'])}개")
                             return lines
 
-                        # 2. 메시지 텍스트 조립 (현장 요청 이어 붙이기)
                         base_lines = [
                             f"[품앗이소비자생활협동조합 발주 요청]",
                             f"{sel_farmer} 농가님, 안녕하세요.",
@@ -643,6 +638,10 @@ if menu == "📦 발주":
                 if df_saip_sub.empty: 
                     st.info(f"{saip_type} 사입 데이터가 없습니다.")
                 else:
+                    # ▼ 새롭게 추가된 합계액 출력 로직
+                    total_amt = df_saip_sub["총판매액"].sum()
+                    st.success(f"💰 **{saip_type} 총 판매 합계액:** {total_amt:,.0f}원")
+                    
                     show_cols = ["발주상태", "업체명", "상품명", "과세구분", "판매량", "발주_수량", "총판매액"]
                     st.dataframe(df_saip_sub[show_cols], hide_index=True, use_container_width=True)
 
@@ -735,16 +734,13 @@ st.subheader("📋 실시간 현장 요청 목록 (수파베이스)")
 
 if supabase:
     try:
-        # 1. staff_data 표에서 데이터를 가져오되, 최신순(created_at 내림차순)으로 정렬
         response = supabase.table("staff_data").select("*").order("created_at", desc=True).execute()
         data = response.data
         
         if data:
-            # 2. 가져온 데이터를 엑셀 표(데이터프레임) 형태로 변환하고 '완료' 체크박스 열 추가
             df = pd.DataFrame(data)
             df.insert(0, "완료", False)
             
-            # 보기 좋게 한글 이름으로 열 제목 변경
             df = df.rename(columns={
                 "created_at": "접수시간",
                 "item_name": "품목명",
@@ -753,7 +749,6 @@ if supabase:
                 "content": "내용"
             })
             
-            # 시간 변환 (UTC -> 한국 시간) 및 포맷 변경
             try:
                 df["접수시간"] = pd.to_datetime(df["접수시간"])
                 if df["접수시간"].dt.tz is None:
@@ -762,7 +757,6 @@ if supabase:
             except Exception as tz_e:
                 pass 
             
-            # 3. 10개씩 보기 / 더보기 로직 적용
             if not st.session_state.show_all_requests and len(df) > 10:
                 display_df = df.head(10)
                 has_more = True
@@ -770,18 +764,16 @@ if supabase:
                 display_df = df
                 has_more = False
 
-            # 4. 체크박스가 포함된 편집 가능한 표 그리기 (id 열은 숨김)
             edited_df = st.data_editor(
                 display_df[["완료", "접수시간", "품목명", "농가명", "긴급도", "내용", "id"]],
                 column_config={
-                    "id": None, # 화면에서 id는 숨김 처리
+                    "id": None,
                     "완료": st.column_config.CheckboxColumn("처리 완료", help="발주가 끝난 항목을 체크하세요.", default=False)
                 },
                 hide_index=True,
                 use_container_width=True
             )
 
-            # 5. 하단 버튼 구역 (삭제 및 더보기)
             col_btn1, col_btn2 = st.columns([1, 1])
             
             with col_btn1:
@@ -791,7 +783,7 @@ if supabase:
                         for req_id in to_delete:
                             supabase.table("staff_data").delete().eq("id", req_id).execute()
                         st.success(f"✅ {len(to_delete)}개의 요청이 영구 삭제되었습니다.")
-                        time.sleep(1) # 삭제 후 자연스러운 화면 전환을 위한 대기
+                        time.sleep(1) 
                         st.rerun()
                     else:
                         st.warning("삭제할 항목을 먼저 체크해 주세요.")
