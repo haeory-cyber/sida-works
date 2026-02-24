@@ -8,6 +8,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
+import subprocess # 🚨 넷포스 봇 연결용 부품 추가
 from supabase import create_client, Client
 
 # ══════════════════════════════════════════
@@ -331,6 +332,28 @@ if menu == "📦 발주":
             period_map = {"최근 1일": 1, "최근 3일": 3, "최근 7일": 7, "최근 14일": 14}
             sel_period = st.selectbox("집계기간", list(period_map.keys()), index=2)
             period_days = period_map[sel_period]
+
+        # 🚨 넷포스 다운로드 버튼 블록 시작
+        st.markdown('<div class="section-label">🤖 넷포스 엑셀 자동 다운로드</div>', unsafe_allow_html=True)
+        col_d1, col_d2, col_d3 = st.columns([1, 1, 1])
+        with col_d1:
+            ui_start = st.date_input("시작일", datetime.datetime.now() - datetime.timedelta(days=7))
+        with col_d2:
+            ui_end = st.date_input("종료일", datetime.datetime.now())
+        with col_d3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🚀 넷포스 데이터 가져오기", use_container_width=True):
+                with st.spinner("봇이 넷포스에서 엑셀을 다운로드 중입니다. 잠시만 기다려주세요 (약 15초)..."):
+                    try:
+                        subprocess.run(
+                            ["python", "netforce.py", ui_start.strftime("%Y-%m-%d"), ui_end.strftime("%Y-%m-%d")],
+                            capture_output=True, text=True, check=True
+                        )
+                        st.success(f"✅ 다운로드 완료! 아래에 다운받은 엑셀을 업로드해주세요.")
+                    except subprocess.CalledProcessError as e:
+                        st.error(f"❌ 실행 실패. 파이썬 경로를 확인하세요.")
+        st.markdown("---")
+        # 🚨 넷포스 다운로드 버튼 블록 끝
 
         st.markdown('<div class="section-label">📂 판매 실적 업로드</div>', unsafe_allow_html=True)
         up_sales = st.file_uploader("판매 실적 파일", type=["xlsx", "csv"], accept_multiple_files=True, key="ord_up", label_visibility="collapsed")
